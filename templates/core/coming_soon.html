@@ -1,0 +1,11 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+<section class="card coming-soon">
+    <h1>Service coming soon</h1>
+    <p>Shy2Ask is only available in Switzerland right now.</p>
+    <p class="small-text">Detected country: {{ country_code|default:"unknown" }}. Allowed: {{ allowed_code }}.</p>
+    <p>If you believe this is incorrect, contact support@shy2ask.com.</p>
+</section>
+{% endblock %}
+

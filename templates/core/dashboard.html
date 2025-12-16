@@ -1,0 +1,34 @@
+{% extends "core/base.html" %}
+{% block content %}
+<div class="flex flex-col gap-4">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold">Your requests</h1>
+    <a class="btn btn-primary" href="{% url 'core:request_create' %}">New request</a>
+  </div>
+  {% if requests %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {% for req in requests %}
+      <div class="card bg-base-100 shadow">
+        <div class="card-body">
+          <h2 class="card-title">{{ req.requester_name }} → {{ req.target_name|default:"Someone" }}</h2>
+          <p class="text-sm text-gray-500">Tracking: {{ req.tracking_code }}</p>
+          <p>Status: <span class="badge">{{ req.get_status_display }}</span></p>
+          <p>Channel: {{ req.get_service_channel_display }} | Quote CHF {{ req.quoted_price_chf }}</p>
+          {% if req.deal %}
+            <p>Deal: {{ req.deal.amount }} {{ req.deal.currency }} | Fee 3% = {{ req.deal.platform_fee }}</p>
+            <p>Status: {{ req.deal.get_status_display }}</p>
+          {% endif %}
+          <div class="card-actions justify-end gap-2">
+            <a class="btn btn-primary btn-sm border-4 border-black font-black" href="{% url 'core:chat' req.pk %}">💬 Chat</a>
+            <a class="btn btn-outline btn-sm border-2 border-black font-bold" href="{% url 'core:request_detail' req.pk %}">📋 Details</a>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p>No requests yet.</p>
+  {% endif %}
+</div>
+{% endblock %}
+

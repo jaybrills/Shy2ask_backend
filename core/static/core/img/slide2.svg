@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#d9e8ff"/>
+      <stop offset="50%" stop-color="#ffe0f7"/>
+      <stop offset="100%" stop-color="#d9e8ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="800" fill="url(#g2)"/>
+  <g fill="#2d6cdf" opacity="0.18">
+    <rect x="80" y="120" width="80" height="560" rx="18"/>
+    <rect x="200" y="90" width="110" height="600" rx="20"/>
+    <rect x="360" y="110" width="90" height="580" rx="20"/>
+    <rect x="520" y="140" width="120" height="520" rx="20"/>
+    <rect x="700" y="100" width="140" height="600" rx="20"/>
+    <rect x="900" y="130" width="110" height="540" rx="20"/>
+    <rect x="1080" y="90" width="140" height="600" rx="22"/>
+  </g>
+  <g fill="#f9d648" opacity="0.32">
+    <circle cx="210" cy="190" r="22"/>
+    <circle cx="540" cy="220" r="26"/>
+    <circle cx="860" cy="180" r="20"/>
+    <circle cx="1180" cy="210" r="24"/>
+  </g>
+  <g fill="#1e1b3a" font-family="Arial, sans-serif" font-weight="700" font-size="44">
+    <text x="140" y="120">Hidden messenger vibes</text>
+    <text x="140" y="180" font-size="24">Cool blues + candy pink stripes</text>
+  </g>
+  <g stroke="#1e1b3a" stroke-width="12" fill="none" stroke-linecap="round">
+    <path d="M180 640 Q 340 540 520 600 T 920 560 T 1220 620"/>
+  </g>
+</svg>
+

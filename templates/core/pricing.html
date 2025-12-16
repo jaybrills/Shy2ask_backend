@@ -1,0 +1,60 @@
+{% extends "core/base.html" %}
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+  <h1 class="text-3xl font-bold">Pricing</h1>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Messaging</h2>
+        <ul class="list-disc pl-5 space-y-2">
+          <li>Email relay: CHF 1</li>
+          <li>Letter: CHF 10</li>
+          <li>Phone call: CHF 20 + 1/min</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Deals & fees</h2>
+        <p>When a deal is marked as completed, we charge 3% of the deal value.</p>
+        <p class="text-sm text-gray-500">Example: ₹10,000 deal → ₹300 fee.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="card bg-base-200 shadow">
+      <div class="card-body">
+        <h3 class="card-title">Free</h3>
+        <ul class="list-disc pl-5 space-y-1 text-sm">
+          <li>Standard delivery</li>
+          <li>Limited messages</li>
+          <li>Basic bad-word filter</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow-lg border-2 border-primary">
+      <div class="card-body">
+        <h3 class="card-title">Premium</h3>
+        <ul class="list-disc pl-5 space-y-1 text-sm">
+          <li>Priority anonymous delivery</li>
+          <li>Unlimited messages</li>
+          <li>Stronger filter</li>
+          <li>Verified anonymous badge</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card bg-base-200 shadow">
+      <div class="card-body">
+        <h3 class="card-title">Enterprise</h3>
+        <ul class="list-disc pl-5 space-y-1 text-sm">
+          <li>Team seats</li>
+          <li>Custom SLAs</li>
+          <li>Dedicated support</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

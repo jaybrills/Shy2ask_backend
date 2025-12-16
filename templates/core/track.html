@@ -1,0 +1,32 @@
+{% extends "core/base.html" %}
+{% block content %}
+<div class="max-w-lg mx-auto card bg-base-100 shadow">
+  <div class="card-body space-y-3">
+    <h2 class="card-title">Track your request</h2>
+    <form method="get">
+      <label class="form-control w-full">
+        <div class="label"><span class="label-text">Tracking code</span></div>
+        <input type="text" name="code" value="{{ code|default:'' }}" class="input input-bordered w-full" placeholder="e.g. ABC123XYZ" />
+      </label>
+      <button class="btn btn-primary mt-2">Check status</button>
+    </form>
+    {% if request_obj %}
+      <div class="alert alert-success mt-4">
+        <div>
+          <p class="font-semibold">Status: {{ request_obj.get_status_display }}</p>
+          <p>Channel: {{ request_obj.get_service_channel_display }} | Quote CHF {{ request_obj.quoted_price_chf }}</p>
+          {% if request_obj.deal %}
+            <p>Deal: {{ request_obj.deal.amount }} {{ request_obj.deal.currency }} | Fee 3% = {{ request_obj.deal.platform_fee }}</p>
+            <p>Deal status: {{ request_obj.deal.get_status_display }}</p>
+          {% endif %}
+        </div>
+      </div>
+    {% elif code %}
+      <div class="alert alert-warning mt-4">
+        <span>No request found for that code.</span>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+

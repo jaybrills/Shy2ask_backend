@@ -1,0 +1,86 @@
+SRS – Shy2ask
+
+Service at
+
+Hosteurope : https://www.hosteurope.de/en/
+
+Login
+
+Guido.sen@protonmail.com
+
+Shy2asK@com767
+
+Go to → Product Admin – WebHosting. (check the settings, let us know if it needs to be
+transferred to other host – task developers)
+
+
+
+
+Url of domain at the moment http://shy2ask.com/
+        - best would be to change to https://shy2ask.com (open question Jayakar what
+          you think?)
+
+MVP
+
+   1. It should be only accessed ISSO Switzerland, for other countries write “service
+      coming soon.. “ also you can only create the account if you are in Switzerland
+      (outside not possible, except what we can’t control like vpn Switzerland login)
+2. Style of home page should be very simple and in style of comics/cartoons from the
+   70s or 80s
+
+3. Logo should be text: Shy2Ask. And style in 70s or 80s comics/cartoons in a speech
+   bubble
+   Something like that:
+
+
+
+
+4. Background.. I have made one in 2010 but can’t find it anymore
+   but idea is something like this / a crowd where 2-3 people stands out, in background
+   a city and . + you would have some bubbles.. whit shy questions
+
+
+
+
+5. Service of the page
+
+   - the service of the page is very simple, you are shy to ask someone for something
+   which you would like to have
+   - as it should be that the requestor, give us (shy2ask) the information about what he
+   wants to ask someone which he/she is shy to aks…. We will do it for those persons.
+   so they don’t feel.. bad to ask a question… with a possible business out of it..
+   but its always like… the requestor doesn’t want that the recipient knows from whom
+   came the question.. as the person is shy.. of maybe good reasons
+
+   - example: I don’t like this guy.. if I would ask her/him…. She/he would never give
+   me the answer
+
+   for example… I like his special car… I want to have the same… would he sale me the
+   car ? … so he can make the request via Shy2ask… the requestor will give us the
+   necessary information… to contact.. the person of the car.. without knowing the
+   requestor…. And we will do the question… like in this example…. Would you sale the
+   car? What would be your price?... if we get a answer… we will charge.. the
+   requestor.. sending him the answer…. Or in case if he will sale the care… it will go
+   through our hands.. and we will charge something 1-2%of the sale price
+
+
+
+6. Therefore … the requestor needs to give us the contact of the person… e-mail, mail
+   address or telefon mobile number -- and we will do it for the shy person
+
+
+7. The requestor should be able in our page to send images, videos, text description
+
+8. To create an account is for free
+
+9. As soon the person want seriously that we contact the other person.. we will do and
+   charge for the service … like to write an mail.. if the requestor provides the mail
+   address. 1CHF…. If we should write a letter… 10CHF…. If we should contact via
+   mobile 20CHF plus conversion per minute 1CHF
+
+10. Disclaimer, like we will not do any violent or outlaw requests-- like an order
+
+   - I hate this guy… you seems to be strong guy (person we (shy2ask) should contact).. I
+   want to ask you.. I will give you 1000CHF if you will.. beat down this person..
+   like such cases.. weapons deal, etc. not possible
+

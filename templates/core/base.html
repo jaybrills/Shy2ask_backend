@@ -1,0 +1,76 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shy2Ask</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" integrity="sha512-tS3jnBOJxZ3Ezxb0d3dGZFODdgNpTiFqouBZfyqCkCmZJLdnOjFkWDXe4sdAl4kzbIRbkIuAeGHG3AxWVsT9Yg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="{% static 'core/styles.css' %}">
+</head>
+<body class="comic-bg">
+    <header class="site-header">
+        <div class="logo-bubble">
+            <span class="logo-text">Shy2Ask</span>
+        </div>
+        <nav class="main-nav">
+            <a href="{% url 'core:home' %}">Home</a>
+            <a href="{% url 'core:request_create' %}">Create request</a>
+            <a href="{% url 'core:pricing' %}">Pricing</a>
+            <a href="{% url 'core:features' %}">Features</a>
+            <a href="{% url 'core:track' %}">Track</a>
+            {% if user.is_authenticated %}
+                <a href="{% url 'core:dashboard' %}">Dashboard</a>
+                <a href="{% url 'logout' %}">Logout</a>
+            {% else %}
+                <a href="{% url 'login' %}">Login</a>
+                <a class="btn btn-primary btn-sm" href="{% url 'core:signup' %}">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="message {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <main class="w-full">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="site-footer">
+        <p>We relay your shy questions with care. No violent or unlawful requests.</p>
+        <p class="small-text">Only available in Switzerland. Contact support@shy2ask.com for help.</p>
+    </footer>
+    <script>
+      (function () {
+        function initHeroSlider() {
+          var container = document.querySelector('[data-hero-slider]');
+          if (!container) return;
+          var slides = Array.prototype.slice.call(
+            container.querySelectorAll('[data-hero-slide]')
+          );
+          if (slides.length <= 1) return;
+          var index = 0;
+          setInterval(function () {
+            slides[index].classList.add('hidden');
+            index = (index + 1) % slides.length;
+            slides[index].classList.remove('hidden');
+          }, 3500);
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', initHeroSlider);
+        } else {
+          initHeroSlider();
+        }
+      })();
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,33 @@
+{% extends "core/base.html" %}
+{% block content %}
+<div class="flex justify-center">
+  <div class="card bg-base-100 shadow-2xl border-4 border-black max-w-md w-full comic-form pop">
+    <div class="card-body">
+      <h2 class="card-title text-3xl mb-2">Create your alias</h2>
+      <p class="text-sm text-gray-500">Sign up to start sending and receiving shy asks.</p>
+      <form method="post" class="space-y-2 mt-4">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        <div class="space-y-2">
+          {% for field in form %}
+          <label class="form-control w-full">
+            <div class="label">
+              <span class="label-text font-semibold">{{ field.label }}</span>
+            </div>
+            {{ field }}
+            {% if field.errors %}
+              <span class="text-error text-sm">{{ field.errors|striptags }}</span>
+            {% endif %}
+          </label>
+          {% endfor %}
+        </div>
+        <div class="card-actions justify-end pt-2">
+          <button class="btn btn-primary wobble">Sign up</button>
+        </div>
+      </form>
+      <p class="text-sm mt-4">Already have an account? <a class="link" href="{% url 'login' %}">Login</a></p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
