@@ -2,7 +2,7 @@
 {% load static %}
 
 {% block content %}
-<div class="w-full h-screen bg-gradient-to-br from-yellow-50 via-purple-50 to-blue-50 flex flex-col">
+<div class="w-full h-screen bg-gradient-to-br from-yellow-50 via-purple-50 to-blue-50 flex flex-col" hx-ext="ws" ws-connect="/ws/chat/{{ request_obj.pk }}/">
   
   <!-- Chat Header - Fixed Top - 70s-80s Comic Style -->
   <div class="bg-gradient-to-r from-purple-500 via-pink-500 to-orange-500 border-b-4 border-black shadow-2xl p-4 md:p-6 relative overflow-hidden">
@@ -20,7 +20,7 @@
               💬 CHAT
             </h1>
             <div class="badge badge-lg border-4 border-black bg-yellow-400 text-black font-black shadow-xl px-3 py-1 transform rotate-[-5deg]">
-              NEW!
+              HTMX WS
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -42,9 +42,9 @@
   </div>
 
   <!-- Chat Messages Area - Scrollable -->
-  <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4" id="chat-messages">
+  <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4" id="chat-messages" hx-swap-oob="true">
     {% for m in messages %}
-      <div class="flex {% if m.sender == 'requester' %}justify-end{% else %}justify-start{% endif %} animate-fade-in">
+      <div class="flex {% if m.sender == 'requester' %}justify-end{% else %}justify-start{% endif %} animate-fade-in" id="message-{{ m.id }}">
         <div class="max-w-[85%] md:max-w-[70%] flex gap-3 {% if m.sender == 'requester' %}flex-row-reverse{% endif %}">
           
           <!-- Avatar -->
@@ -124,10 +124,10 @@
     <!-- Comic pattern -->
     <div class="absolute inset-0 opacity-5" style="background-image: repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.1) 20px, rgba(0,0,0,0.1) 40px);"></div>
     
-    <form method="post" action="{% url 'core:post_message' request_obj.pk %}?redirect=core:chat" class="flex gap-3 items-end relative z-10">
+    <form ws-send class="flex gap-3 items-end relative z-10" id="chat-form">
       {% csrf_token %}
       <div class="flex-1 relative">
-        {{ form.body }}
+        <textarea name="body" id="message-body" rows="2" placeholder="Type your message here..." class="textarea textarea-bordered w-full border-4 border-black shadow-md resize-none" required></textarea>
         {% if form.body.errors %}
           <div class="text-red-600 font-bold text-xs mt-1">{{ form.body.errors }}</div>
         {% endif %}
@@ -213,8 +213,74 @@
 </style>
 
 <script>
-  // Auto-scroll to bottom on load and when new messages arrive
-  function scrollToBottom() {
+  // Debug: Log HTMX WS events
+  document.body.addEventListener('htmx:wsConnecting', function(evt) {
+    console.log('HTMX WS: Connecting...', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsOpen', function(evt) {
+    console.log('HTMX WS: Connected!', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsClose', function(evt) {
+    console.log('HTMX WS: Closed', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsError', function(evt) {
+    console.error('HTMX WS: Error', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsConfigSend', function(evt) {
+    console.log('HTMX WS: Config send', evt.detail);
+    // Log what will be sent
+    console.log('Message body:', evt.detail.messageBody);
+    console.log('Parameters:', evt.detail.parameters);
+  });
+
+  document.body.addEventListener('htmx:wsBeforeSend', function(evt) {
+    console.log('HTMX WS: Before send', evt.detail);
+    console.log('Message being sent:', evt.detail.message);
+  });
+
+  document.body.addEventListener('htmx:wsAfterSend', function(evt) {
+    console.log('HTMX WS: After send', evt.detail);
+    // Clear form after sending message
+    const form = document.getElementById('chat-form');
+    if (form) {
+      const textarea = form.querySelector('textarea[name="body"]');
+      if (textarea) {
+        textarea.value = '';
+        textarea.focus();
+      }
+    }
+  });
+
+  document.body.addEventListener('htmx:wsBeforeMessage', function(evt) {
+    console.log('HTMX WS: Before message', evt.detail);
+  });
+
+  // Auto-scroll to bottom when new messages arrive
+  document.body.addEventListener('htmx:wsAfterMessage', function(evt) {
+    console.log('HTMX WS: After message', evt.detail);
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+      setTimeout(() => {
+        chatMessages.scrollTo({
+          top: chatMessages.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 100);
+    }
+  });
+
+  // Focus textarea on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    const textarea = document.querySelector('textarea[name="body"]');
+    if (textarea) {
+      textarea.focus();
+    }
+    
+    // Scroll to bottom on initial load
     const chatMessages = document.getElementById('chat-messages');
     if (chatMessages) {
       chatMessages.scrollTo({
@@ -222,44 +288,13 @@
         behavior: 'smooth'
       });
     }
-  }
-  
-  // Initial scroll
-  document.addEventListener('DOMContentLoaded', function() {
-    scrollToBottom();
-    
-    // Watch for new messages (for future real-time updates)
-    const observer = new MutationObserver(function() {
-      scrollToBottom();
-    });
-    
-    const chatMessages = document.getElementById('chat-messages');
-    if (chatMessages) {
-      observer.observe(chatMessages, { childList: true, subtree: true });
+
+    // Check if HTMX WS is loaded
+    if (typeof htmx !== 'undefined' && htmx.extension) {
+      console.log('HTMX WS extension loaded');
+    } else {
+      console.error('HTMX WS extension not loaded!');
     }
-    
-    // Focus on textarea when page loads
-    const textarea = document.querySelector('textarea[name="body"]');
-    if (textarea) {
-      textarea.focus();
-    }
-  });
-  
-  // Handle form submission with better UX
-  document.querySelector('form')?.addEventListener('submit', function(e) {
-    const textarea = this.querySelector('textarea[name="body"]');
-    if (textarea && textarea.value.trim() === '') {
-      e.preventDefault();
-      return false;
-    }
-    // Clear textarea after a brief delay to show the message was sent
-    setTimeout(() => {
-      if (textarea) {
-        textarea.value = '';
-        textarea.focus();
-      }
-    }, 100);
   });
 </script>
 {% endblock %}
-

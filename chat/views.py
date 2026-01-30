@@ -36,7 +36,7 @@ def coming_soon(request):
     _, detected_code = country_is_allowed(request)
     return render(
         request,
-        "core/coming_soon.html",
+        "chat/coming_soon.html",
         {"country_code": detected_code, "allowed_code": settings.ALLOWED_COUNTRY_CODE},
     )
 
@@ -49,7 +49,7 @@ def home(request):
         "form": ShyRequestForm(),
         "detected_country": detected or settings.ALLOWED_COUNTRY_CODE,
     }
-    return render(request, "core/home.html", context)
+    return render(request, "chat/home.html", context)
 
 
 def request_create(request):
@@ -102,7 +102,7 @@ def request_create(request):
 
     return render(
         request,
-        "core/request_form.html",
+        "chat/request_form.html",
         {
             "form": form,
             "detected_country": detected or settings.ALLOWED_COUNTRY_CODE,
@@ -111,7 +111,7 @@ def request_create(request):
 
 
 def request_success(request):
-    return render(request, "core/request_success.html")
+    return render(request, "chat/request_success.html")
 
 
 def send_notification(subject, body, recipient, related_request=None):
@@ -125,25 +125,41 @@ def send_notification(subject, body, recipient, related_request=None):
         fail_silently=True,
     )
     from .models import Notification
+    from .websocket_utils import send_notification_websocket
 
-    Notification.objects.create(
+    notification = Notification.objects.create(
         recipient_email=recipient,
         subject=subject,
         body=body,
         related_request=related_request,
     )
 
+    # Send WebSocket notification if user is logged in
+    if related_request and related_request.user:
+        send_notification_websocket(
+            related_request.user.id,
+            {
+                "id": notification.id,
+                "subject": notification.subject,
+                "body": notification.body,
+                "created_at": notification.created_at.isoformat(),
+                "created_at_display": notification.created_at.strftime("%b %d, %H:%M"),
+                "request_id": related_request.id if related_request else None,
+                "tracking_code": related_request.tracking_code if related_request else None,
+            }
+        )
+
 
 def pricing(request):
-    return render(request, "core/pricing.html")
+    return render(request, "chat/pricing.html")
 
 
 def about(request):
-    return render(request, "core/about.html")
+    return render(request, "chat/about.html")
 
 
 def features(request):
-    return render(request, "core/features.html")
+    return render(request, "chat/features.html")
 
 
 def signup(request):
@@ -158,7 +174,7 @@ def signup(request):
             return redirect("core:dashboard")
     else:
         form = SignUpForm()
-    return render(request, "core/signup.html", {"form": form})
+    return render(request, "chat/signup.html", {"form": form})
 
 
 @login_required
@@ -166,7 +182,7 @@ def dashboard(request):
     requests = ShyRequest.objects.filter(user=request.user).order_by("-created_at")
     return render(
         request,
-        "core/dashboard.html",
+        "chat/dashboard.html",
         {"requests": requests, "deals": [getattr(r, 'deal', None) for r in requests]},
     )
 
@@ -180,7 +196,7 @@ def chat_page(request, pk):
     form = MessageForm()
     return render(
         request,
-        "core/chat.html",
+        "chat/chat.html",
         {
             "request_obj": shy_request,
             "conversation": conversation,
@@ -199,7 +215,7 @@ def request_detail(request, pk):
     deal_form = DealForm(instance=getattr(shy_request, "deal", None))
     return render(
         request,
-        "core/request_detail.html",
+        "chat/request_detail.html",
         {
             "request_obj": shy_request,
             "conversation": conversation,
@@ -222,6 +238,22 @@ def post_message(request, pk):
             msg.sender = Message.Sender.REQUESTER
             msg.author = request.user
             msg.save()
+            
+            # Send WebSocket message to chat room
+            from .websocket_utils import send_chat_message_websocket
+            send_chat_message_websocket(
+                shy_request.id,
+                {
+                    "id": msg.id,
+                    "body": msg.clean_body or msg.body,
+                    "sender": msg.sender,
+                    "sender_display": msg.get_sender_display(),
+                    "is_blocked": msg.is_blocked,
+                    "created_at": msg.created_at.isoformat(),
+                    "created_at_display": msg.created_at.strftime("%b %d, %H:%M"),
+                }
+            )
+            
             send_notification(
                 subject="New reply from requester",
                 body=msg.body,
@@ -264,4 +296,4 @@ def track(request):
     request_obj = None
     if code:
         request_obj = ShyRequest.objects.filter(tracking_code=code).first()
-    return render(request, "core/track.html", {"request_obj": request_obj, "code": code})
+    return render(request, "chat/track.html", {"request_obj": request_obj, "code": code})

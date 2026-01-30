@@ -9,10 +9,10 @@ from django.contrib.auth import views as auth_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('login/', auth_views.LoginView.as_view(template_name="core/login.html"), name="login"),
+    path('login/', auth_views.LoginView.as_view(template_name="chat/login.html"), name="login"),
     path('logout/', auth_views.LogoutView.as_view(), name="logout"),
-    path('api/', include('core.api_urls')),
-    path('', include('core.urls')),
+    path('api/', include('chat.api_urls')),
+    path('', include('chat.urls')),
 ]
 
 if settings.DEBUG:

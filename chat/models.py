@@ -132,9 +132,17 @@ class Notification(models.Model):
     subject = models.CharField(max_length=200)
     body = models.TextField()
     sent_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    is_read = models.BooleanField(default=False)
     related_request = models.ForeignKey(
         ShyRequest, on_delete=models.CASCADE, null=True, blank=True
     )
+
+    def save(self, *args, **kwargs):
+        if not self.created_at:
+            from django.utils import timezone
+            self.created_at = timezone.now()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Notification to {self.recipient_email}"
