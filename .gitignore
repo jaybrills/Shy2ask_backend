@@ -40,6 +40,11 @@ Thumbs.db
 *.exe
 *.war
 
+# Environment and secrets (never commit)
+.env
+.env.local
+.env.*.local
+
 # Large media files
 *.mp4
 *.tiff
