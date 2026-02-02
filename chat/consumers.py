@@ -74,44 +74,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     async def receive(self, text_data):
-        """Receive message from WebSocket."""
+        """Receive message from WebSocket. Accept { body, alias } – alias is display name for this request/conversation."""
         try:
-            # Debug: Print raw received data
-            print(f"WebSocket received raw text: {text_data[:200]}")
-            
             data = json.loads(text_data)
-            print(f"WebSocket received parsed data: {data}")
-            
-            # HTMX WS sends form data as JSON with field names
-            # The form field is named "body", so HTMX WS sends {"body": "message text"}
-            # HTMX WS also includes HEADERS in the JSON
             body = None
-            
-            # Try direct field access first (HTMX WS format)
+            alias = (data.get("alias") or "").strip() or None
+
             if "body" in data:
                 body = str(data["body"]).strip()
-            
-            # Try alternative field names (in case HTMX sends differently)
             if not body:
-                # Check all string values in the data
                 for key, value in data.items():
-                    if key != "HEADERS" and isinstance(value, str) and value.strip():
+                    if key not in ("HEADERS", "alias") and isinstance(value, str) and value.strip():
                         body = value.strip()
-                        print(f"Found body in field '{key}': {body}")
                         break
-            
-            # If it's a type-based message (old format), handle it
             if not body:
                 message_type = data.get("type")
                 if message_type == "chat_message":
                     body = data.get("body", "").strip()
-            
-            # Debug: Print extracted body
-            print(f"Extracted body: '{body}'")
-            
+
             if body:
-                # Create message (pass user explicitly)
-                message_data = await self.create_message(body, self.user)
+                message_data = await self.create_message(body, self.user, alias=alias)
                 if message_data:
                     print(f"Message created successfully: ID={message_data.get('id')}")
                     
@@ -171,58 +153,79 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_recent_messages(self):
-        """Get recent messages for the conversation."""
+        """Get recent messages for the conversation; include display_name (alias or profile default)."""
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
             conversation, _ = Conversation.objects.get_or_create(request=request)
             messages = conversation.messages.order_by("-created_at")[:50]
-            return [
-                {
+            out = []
+            for msg in reversed(messages):
+                display_name = msg.sender_display_name or self._message_display_name(msg, request)
+                out.append({
                     "id": msg.id,
                     "body": msg.clean_body or msg.body,
                     "sender": msg.sender,
                     "sender_display": msg.get_sender_display(),
+                    "display_name": display_name,
                     "is_blocked": msg.is_blocked,
                     "created_at": msg.created_at.isoformat(),
                     "created_at_display": msg.created_at.strftime("%b %d, %H:%M"),
-                }
-                for msg in reversed(messages)
-            ]
+                })
+            return out
         except Exception as e:
             print(f"Error getting recent messages: {e}")
             return []
 
+    def _message_display_name(self, msg, request):
+        """Resolve display name for a message (request alias or profile default)."""
+        if msg.sender == Message.Sender.REQUESTER:
+            if msg.author:
+                return getattr(msg.author, "alias_name", None) or request.requester_alias or request.requester_name
+            return request.requester_alias or request.requester_name
+        if msg.sender == Message.Sender.RESPONDER:
+            return request.requester_alias or request.requester_name or "Responder"
+        return "Staff"
+
     @database_sync_to_async
-    def create_message(self, body, user):
-        """Create a new message."""
+    def create_message(self, body, user, alias=None):
+        """Create a new message. alias = display name for this message (request-wise); else use profile/request default."""
         try:
             from .utils import censor_text
 
             request = ShyRequest.objects.get(pk=self.request_id)
             conversation, _ = Conversation.objects.get_or_create(request=request)
 
-            # Censor the message
             clean_body, blocked = censor_text(body)
 
-            # Determine sender based on user type
             if self.is_responder:
                 sender = Message.Sender.RESPONDER
-                author = None  # Responder is not logged in
+                author = None
             else:
                 sender = Message.Sender.REQUESTER
                 author = user
+
+            display_name = (alias or "").strip()
+            if not display_name and sender == Message.Sender.REQUESTER and author:
+                display_name = getattr(author, "alias_name", "") or request.requester_alias or request.requester_name
+            if not display_name and sender == Message.Sender.REQUESTER:
+                display_name = request.requester_alias or request.requester_name
+            if not display_name and sender == Message.Sender.RESPONDER:
+                display_name = request.requester_alias or request.requester_name or "Responder"
+            if not display_name:
+                display_name = "Staff"
 
             message = Message.objects.create(
                 conversation=conversation,
                 sender=sender,
                 author=author,
+                sender_display_name=display_name if (alias or "").strip() else "",  # store only if client set alias
                 body=body,
                 clean_body=clean_body,
                 is_blocked=blocked,
             )
+            # Use resolved display_name for response (in case we computed it)
+            out_display = (alias or "").strip() or display_name
 
-            # Store notification data to send later (outside sync context)
-            # We'll return this info and send notifications in the async receive method
             notification_info = {
                 "is_responder": self.is_responder,
                 "request": request,
@@ -234,10 +237,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "body": message.clean_body or message.body,
                 "sender": message.sender,
                 "sender_display": message.get_sender_display(),
+                "display_name": out_display,
                 "is_blocked": message.is_blocked,
                 "created_at": message.created_at.isoformat(),
                 "created_at_display": message.created_at.strftime("%b %d, %H:%M"),
-                "notification_info": notification_info,  # Include notification data
+                "notification_info": notification_info,
             }
         except Exception as e:
             print(f"Error creating message: {e}")
@@ -247,13 +251,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def render_message_html(self, message):
-        """Render message as HTML for HTMX."""
+        """Render message as HTML for HTMX; include display_name (alias or profile default)."""
         is_requester = message.get("sender") == "requester"
         return render_to_string(
             "chat/message_fragment.html",
             {
                 "message_id": message.get("id"),
                 "message_body": message.get("body", ""),
+                "display_name": message.get("display_name", ""),
                 "is_requester": is_requester,
                 "is_blocked": message.get("is_blocked", False),
                 "created_at_display": message.get("created_at_display", ""),

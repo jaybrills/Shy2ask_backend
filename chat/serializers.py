@@ -12,24 +12,41 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 
 class MessageSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Message
-        fields = ["id", "sender", "body", "clean_body", "is_blocked", "created_at"]
-        read_only_fields = ["id", "clean_body", "is_blocked", "created_at", "sender"]
+        fields = ["id", "sender", "sender_display_name", "display_name", "body", "clean_body", "is_blocked", "created_at"]
+        read_only_fields = ["id", "clean_body", "is_blocked", "created_at", "sender", "display_name"]
+
+    def get_display_name(self, obj):
+        if obj.sender_display_name:
+            return obj.sender_display_name
+        req = obj.conversation.request
+        if obj.sender == Message.Sender.REQUESTER and obj.author:
+            return getattr(obj.author, "alias_name", None) or req.requester_alias or req.requester_name
+        if obj.sender == Message.Sender.REQUESTER:
+            return req.requester_alias or req.requester_name
+        if obj.sender == Message.Sender.RESPONDER:
+            return req.requester_alias or req.requester_name or "Responder"
+        return "Staff"
 
     def create(self, validated_data):
         conversation = self.context["conversation"]
         author = self.context.get("author")
+        alias = self.context.get("alias")
         body = validated_data["body"]
         clean_body, blocked = censor_text(body)
-        return Message.objects.create(
+        msg = Message.objects.create(
             conversation=conversation,
             sender=Message.Sender.REQUESTER,
             author=author,
+            sender_display_name=alias or "",
             body=body,
             clean_body=clean_body,
             is_blocked=blocked,
         )
+        return msg
 
 
 class ShyRequestSerializer(serializers.ModelSerializer):
@@ -43,6 +60,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "requester_name",
             "requester_email",
             "requester_phone",
+            "requester_alias",
             "target_name",
             "target_email",
             "target_phone",
@@ -67,9 +85,14 @@ class ShyRequestSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
-        user = self.context["request"].user if self.context["request"].user.is_authenticated else None
+        request = self.context["request"]
+        user = request.user if request.user.is_authenticated else None
+        requester_alias = validated_data.pop("requester_alias", None) or ""
+        if user and not requester_alias:
+            requester_alias = getattr(user, "alias_name", "") or ""
         shy_request = ShyRequest.objects.create(
             user=user,
+            requester_alias=requester_alias,
             status=ShyRequest.Status.SUBMITTED,
             country_code=self.context.get("country_code", ""),
             **validated_data,

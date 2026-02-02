@@ -31,6 +31,11 @@ class ShyRequest(models.Model):
     requester_name = models.CharField(max_length=120)
     requester_email = models.EmailField()
     requester_phone = models.CharField(max_length=50, blank=True)
+    requester_alias = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Display name for this request (e.g. in chat). If blank, profile alias or requester_name is used.",
+    )
 
     target_name = models.CharField(max_length=120, blank=True)
     target_email = models.EmailField(blank=True)
@@ -101,6 +106,7 @@ class Message(models.Model):
     class Sender(models.TextChoices):
         REQUESTER = ("requester", "Requester")
         STAFF = ("staff", "Staff")
+        RESPONDER = ("responder", "Responder")  # reply via tracking code (no login)
 
     conversation = models.ForeignKey(
         Conversation, related_name="messages", on_delete=models.CASCADE
@@ -108,6 +114,11 @@ class Message(models.Model):
     sender = models.CharField(max_length=20, choices=Sender.choices)
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    sender_display_name = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Display name for this message (e.g. alias). If blank, derived from request/profile.",
     )
     body = models.TextField()
     clean_body = models.TextField(blank=True)

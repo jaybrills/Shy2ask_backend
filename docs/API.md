@@ -340,6 +340,7 @@ REST framework under `/api/`. No auth required for create/list by default; filte
   "requester_name": "John Doe",
   "requester_email": "john@example.com",
   "requester_phone": "",
+  "requester_alias": "MyNick",
   "target_name": "Jane",
   "target_email": "jane@example.com",
   "target_phone": "",
@@ -349,6 +350,7 @@ REST framework under `/api/`. No auth required for create/list by default; filte
   "call_minutes": 0
 }
 ```
+- `requester_alias` (optional): display name for this request (e.g. in chat). If omitted and user is logged in, profile `alias_name` is used.
 - `service_channel`: `"email"` \| `"letter"` \| `"call"`  
 - `tracking_code`, `quoted_price_chf`, `status`, `country_code`, `created_at`, `attachments` are read-only.
 
@@ -393,11 +395,22 @@ REST framework under `/api/`. No auth required for create/list by default; filte
 ```
 Message is censored; `clean_body` and `is_blocked` are set by the backend.
 
+**Request body (JSON):** `body` (required), optional `alias` (display name for this message).
+```json
+{
+  "body": "Message text...",
+  "alias": "MyNick"
+}
+```
+If `alias` is omitted, the requester’s profile `alias_name` or the request’s `requester_alias` is used.
+
 **Response:** `201 Created` – message object:
 ```json
 {
   "id": 1,
   "sender": "requester",
+  "sender_display_name": "MyNick",
+  "display_name": "MyNick",
   "body": "Original text",
   "clean_body": "Censored text",
   "is_blocked": false,
@@ -409,19 +422,29 @@ Message is censored; `clean_body` and `is_blocked` are set by the backend.
 
 #### GET `/api/requests/{id}/conversation/`
 
-**Response:** `200 OK` – array of message objects (same shape as above).
+**Response:** `200 OK` – array of message objects (same shape as above, with `display_name`).
 
 ---
 
-## 3. WebSockets
+## 3. WebSockets (WS / WSS)
 
-- **Chat:** `ws://localhost:8000/ws/chat/<request_id>/`  
-  - Replace `<request_id>` with the numeric request ID for real-time chat.
+Use **ws://** on HTTP and **wss://** on HTTPS (same path). Example: `wss://yourdomain.com/ws/chat/123/`.
 
-- **Notifications:** `ws://localhost:8000/ws/notifications/`  
-  - General notifications channel.
+| Purpose | URL | Auth / access |
+|--------|-----|----------------|
+| **Chat (conversation)** | `ws://host/ws/chat/<request_id>/` or `wss://host/ws/chat/<request_id>/` | Requester: logged-in owner of request. Responder: `?tracking_code=XXX`. |
+| **Notifications** | `ws://host/ws/notifications/` or `wss://host/ws/notifications/` | Logged-in user only. |
 
-(Details of message formats for these WebSockets are app-specific; connect and subscribe to events as needed.)
+### Chat WebSocket
+
+- **Connect:** `ws://localhost:8000/ws/chat/<request_id>/` (requester) or `ws://localhost:8000/ws/chat/<request_id>/?tracking_code=ABC123` (responder).
+- **Send message (JSON):**
+  - `body` (required): message text.
+  - `alias` (optional): display name for this request/conversation. If omitted, profile `alias_name` or request `requester_alias` or `requester_name` is used.
+```json
+{"body": "Hello!", "alias": "MyNick"}
+```
+- **Receive:** server sends HTML fragments (HTMX OOB) or message payloads; each includes `display_name` (alias or default).
 
 ---
 

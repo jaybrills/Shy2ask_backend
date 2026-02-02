@@ -35,6 +35,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             context={
                 "conversation": conversation,
                 "author": request.user if request.user.is_authenticated else None,
+                "alias": (request.data.get("alias") or "").strip() or None,
             },
         )
         serializer.is_valid(raise_exception=True)

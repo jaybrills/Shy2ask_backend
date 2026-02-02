@@ -15,7 +15,7 @@
       <div class="flex items-center gap-2 mb-2">
         <div class="badge border-4 border-black {% if is_requester %}bg-yellow-400{% else %}bg-blue-400{% endif %} text-black font-black shadow-xl px-3 py-1 transform {% if is_requester %}rotate-2{% else %}rotate-[-2deg]{% endif %} hover:scale-110 transition-transform">
           <span class="text-xs md:text-sm">
-            {% if is_requester %}👤 YOU{% else %}🏢 SHY2ASK{% endif %}
+            {% if display_name %}👤 {{ display_name }}{% elif is_requester %}👤 YOU{% else %}🏢 SHY2ASK{% endif %}
           </span>
         </div>
         <div class="badge border-3 border-black bg-white text-gray-700 font-black shadow-lg px-2 py-1 text-xs transform rotate-1">
