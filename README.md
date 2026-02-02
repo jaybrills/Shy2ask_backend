@@ -1,52 +1,63 @@
-# Shy2Ask (Django)
+# Shy2Ask
 
-Prototype that follows the provided SRS: Swiss-only access, cartoon-styled landing page, and a flow to submit shy requests with attachments and simple pricing.
+Django API with Django Ninja (auth, profile), DRF (chat), and real-time WebSockets (Daphne).
 
-## Requirements
-
-- Python 3.10+
-- Virtualenv (created as `venv/`)
-
-## Setup
+## Run
 
 ```bash
-cd /home/khajan/project/shy2ask
-python3 -m venv venv
-. venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+daphne -b 0.0.0.0 -p 8000 shy2ask.asgi:application
 ```
 
-## Features
+Or: `python manage.py runserver 0.0.0.0:8000`
 
-- Location gate: only Switzerland (ISO code `CH`) is allowed; others see “service coming soon.”
-- Landing page styled with comic-inspired bubbles and hero section.
-- Request form with contact details for the recipient, description, and optional attachments (images/videos/docs).
-- Pricing rules from the SRS: CHF 1 email, CHF 10 letter, CHF 20 + 1/min call; auto-calculated and stored.
-- Admin registration for managing requests and their attachments.
+**API docs (Swagger):** http://0.0.0.0:8000/docs
 
-## Country detection
+## Django Ninja API (Auth & Profile)
 
-- Looks for ISO country code in header `X-Country-Code` (configurable via `COUNTRY_HEADER`).
-- Fallback headers checked: `CF-IPCountry`, `X-Country`.
-- If no header is present:
-  - `DEBUG=True`: allowed for local development.
-  - `DEBUG=False`: blocked (renders coming-soon page).
-- Override for testing: add `?country_override=US` or `?country_override=CH` to URLs.
+Login with **email only**. **Email verification** and **forgot/reset password** use OTP by email (like Storemate).
 
-## File storage
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/auth/register` | No | Register → sends **email verification OTP**; user must verify before login |
+| POST | `/auth/verify-email` | No | Verify email: `email`, `otp_code` (from register email) |
+| POST | `/auth/resend-verification` | No | Resend verification OTP to `email` |
+| POST | `/auth/login` | No | Login: email, password → returns token (only if **email verified**) |
+| POST | `/auth/forgot-password` | No | Send **password reset OTP** to email |
+| POST | `/auth/reset-password` | No | Reset password: `email`, `otp`, `new_password` |
+| GET | `/profile/me` | Bearer | Get current user profile (includes `is_verified`) |
+| PATCH | `/profile/me` | Bearer | Update profile (optional: profile_picture multipart) |
+| GET | `/profile/users` | Bearer (staff) | List users: `?limit=&offset=&search=` |
 
-- User uploads are stored under `media/attachments/<year>/<month>/<day>/`.
-- Static assets live in `core/static/core/`; extra global assets can go in `static/`.
+**Authorization:** `Authorization: Bearer <token>` (from login or register).
 
-## Useful URLs
+**Config:** Copy `env.example` to `.env` and set `EMAIL_*` (and optional `DB_*`, `SECRET_KEY`, etc.). Email is used for verification and password-reset OTPs.
 
-- `/` – landing page
-- `/request/new/` – create a shy request
-- `/admin/` – Django admin (create a superuser via `python manage.py createsuperuser`)
+## Censor engine (text + image, rule-based + AI)
 
-## Safety disclaimer
+- **Text:** Rule-based lists (DB + built-in) catch banned words/phrases; **evasive spelling** with dots, dashes, underscores is normalized (e.g. `d.r.u.g.s`, `buy.your.girl` still match). Then **OpenAI Moderation API** (if `OPENAI_API_KEY` in `.env`) or Google Perspective API for toxicity.
+- **Image:** OCR (Tesseract) → text censor on extracted text; if `OPENAI_API_KEY` is set, **OpenAI Vision** also checks image content (violence, adult, drugs, etc.).
+- **To use OpenAI (recommended):** In your `.env` set `OPENAI_API_KEY=sk-...` (get key at [platform.openai.com](https://platform.openai.com/)). Do not put the key in code.
+- **Flow:** Our local model (optional) → **OpenAI** (text Moderation + image Vision when key set) → Google API fallback. API responses are saved to **Censor training examples** for retraining.
+- **Fetch training data:**  
+  `python manage.py fetch_censor_training_data --samples` or `samples.txt` (one text per line).  
+- **Train our model:**  
+  `python manage.py train_censor_model` (needs ≥50 examples); `--add-offensive-terms` adds DB terms.  
+  Model saved to `CENSOR_MODEL_PATH`.
+- **Settings:** `OPENAI_API_KEY`, `CENSOR_OPENAI_VISION_MODEL` (default `gpt-4o-mini`), `CENSOR_AI_THRESHOLD`, `PERSPECTIVE_API_KEY` (fallback).
 
-The UI and form copy explicitly reject violent or unlawful requests, as requested in the SRS. Adjust wording in `templates/core/*.html` if you need stricter language.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/censor/text` | No | Body: `{"text": "..."}` → `censored_text`, `blocked`, `detected`, `categories`, `ai_toxic_score`, `ai_provider` |
+| POST | `/censor/image` | No | Multipart: `image` file → OCR + censor; same response + `extracted_text`, `ocr_available` |
 
+**Image OCR:** Install [Tesseract](https://github.com/tesseract-ocr/tesseract); else `ocr_available: false`.
+
+## Other routes
+
+- **HTTP:** `/admin/`, `/api/` (DRF chat requests/messages)
+- **WebSocket:** `/ws/chat/<request_id>/`, `/ws/notifications/`
+- **OpenAPI schema:** `/openapi.json`
+
+Optional: Redis for channel layer; without it, in-memory layer is used (single process).

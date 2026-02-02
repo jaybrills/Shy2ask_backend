@@ -46,6 +46,11 @@ class User(AbstractBaseUser, PermissionsMixin):
             'Unselect this instead of deleting accounts.'
         ),
     )
+    is_verified = models.BooleanField(
+        _('verified'),
+        default=False,
+        help_text=_('Designates whether this user has verified their email with OTP.'),
+    )
     date_joined = models.DateTimeField(_('date joined'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)
 
@@ -94,4 +99,40 @@ class User(AbstractBaseUser, PermissionsMixin):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+
+class PasswordResetOTP(models.Model):
+    """One-time code for password reset; sent by email."""
+    email = models.EmailField(_("email address"), db_index=True)
+    otp_code = models.CharField(_("OTP code"), max_length=8)
+    created_at = models.DateTimeField(_("created at"), auto_now_add=True)
+    expires_at = models.DateTimeField(_("expires at"))
+
+    class Meta:
+        verbose_name = _("password reset OTP")
+        verbose_name_plural = _("password reset OTPs")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"OTP for {self.email}"
+
+
+class EmailVerificationOTP(models.Model):
+    """One-time code for email verification after signup."""
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="email_verification_otps",
+    )
+    otp_code = models.CharField(_("OTP code"), max_length=8)
+    created_at = models.DateTimeField(_("created at"), auto_now_add=True)
+    expires_at = models.DateTimeField(_("expires at"))
+
+    class Meta:
+        verbose_name = _("email verification OTP")
+        verbose_name_plural = _("email verification OTPs")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Verification OTP for {self.user.email}"
 

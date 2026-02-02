@@ -188,3 +188,128 @@ class Deal(models.Model):
         self.payment_reference = reference
         self.status = self.Status.PAID
         self.save(update_fields=["payment_reference", "status", "updated_at", "platform_fee"])
+
+
+# ----- Censor engine: store offensive terms in DB (any language) -----
+class CensorCategory(models.Model):
+    """Category for offensive terms (abusive, illegal, drugs, etc.)."""
+    name = models.CharField(max_length=80)
+    slug = models.SlugField(max_length=50, unique=True, help_text="e.g. abusive, illegal, human_trafficking")
+    description = models.CharField(max_length=255, blank=True)
+    is_blocking = models.BooleanField(
+        default=True,
+        help_text="If True, matching content is blocked (rejected).",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Censor category"
+        verbose_name_plural = "Censor categories"
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.slug})"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        try:
+            from .censor_loader import invalidate_censor_cache
+            invalidate_censor_cache()
+        except Exception:
+            pass
+
+
+class OffensiveTerm(models.Model):
+    """Single offensive word or phrase, any language. Loaded by censor engine."""
+    class TermType(models.TextChoices):
+        WORD = ("word", "Word")
+        PHRASE = ("phrase", "Phrase")
+
+    category = models.ForeignKey(
+        CensorCategory,
+        on_delete=models.CASCADE,
+        related_name="terms",
+    )
+    term = models.CharField(max_length=255, help_text="Word or phrase to detect (case-insensitive).")
+    term_type = models.CharField(
+        max_length=10,
+        choices=TermType.choices,
+        default=TermType.WORD,
+    )
+    language_code = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        help_text="ISO 639-1 e.g. en, ar, hi. Empty = any language.",
+    )
+    is_blocking = models.BooleanField(
+        default=True,
+        help_text="If True, content containing this term is blocked.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Offensive term"
+        verbose_name_plural = "Offensive terms"
+        ordering = ["category", "term_type", "-term"]
+        indexes = [
+            models.Index(fields=["category", "is_active"]),
+            models.Index(fields=["language_code", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.term} ({self.category.slug})"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        try:
+            from .censor_loader import invalidate_censor_cache
+            invalidate_censor_cache()
+        except Exception:
+            pass
+
+
+class CensorLog(models.Model):
+    """Log when content was blocked by censor (for safety and tuning)."""
+    source = models.CharField(max_length=32, blank=True, help_text="e.g. api, chat, upload")
+    categories = models.JSONField(default=list, help_text="List of category slugs that triggered.")
+    detected_terms = models.JSONField(default=list, help_text="List of detected term strings.")
+    blocked = models.BooleanField(default=True)
+    text_preview = models.CharField(max_length=500, blank=True, help_text="First 500 chars of input (redacted).")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Censor log"
+        verbose_name_plural = "Censor logs"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"CensorLog {self.id} blocked={self.blocked} {self.created_at}"
+
+
+class CensorTrainingExample(models.Model):
+    """
+    Training data for our own AI model.
+    When Google API detects toxic content (and our model missed it), we save here.
+    Then we retrain our model on this data so it learns over time.
+    """
+    class Source(models.TextChoices):
+        GOOGLE_API = ("google_api", "Google API (fallback detected)")
+        OUR_MODEL = ("our_model", "Our model detected")
+        MANUAL = ("manual", "Manual label")
+
+    text = models.TextField(help_text="Input text (truncated for storage).")
+    is_toxic = models.BooleanField(help_text="True = offensive/toxic, False = safe.")
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.GOOGLE_API)
+    score = models.FloatField(null=True, blank=True, help_text="Toxicity score from API or model.")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Censor training example"
+        verbose_name_plural = "Censor training examples"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["source", "is_toxic"])]
+
+    def __str__(self):
+        return f"{'toxic' if self.is_toxic else 'safe'} ({self.source})"

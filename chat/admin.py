@@ -2,10 +2,14 @@ from django.contrib import admin
 
 from .models import (
     Attachment,
+    CensorCategory,
+    CensorLog,
+    CensorTrainingExample,
     Conversation,
     Deal,
     Message,
     Notification,
+    OffensiveTerm,
     ShyRequest,
 )
 
@@ -64,3 +68,68 @@ class NotificationAdmin(admin.ModelAdmin):
 class DealAdmin(admin.ModelAdmin):
     list_display = ("request", "amount", "currency", "platform_fee", "status", "payer")
     list_filter = ("status", "currency")
+
+
+# ----- Censor engine (DB terms + logs) -----
+class OffensiveTermInline(admin.TabularInline):
+    model = OffensiveTerm
+    extra = 0
+    fields = ("term", "term_type", "language_code", "is_blocking", "is_active")
+
+
+@admin.register(CensorCategory)
+class CensorCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "is_blocking", "created_at")
+    list_filter = ("is_blocking",)
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    inlines = [OffensiveTermInline]
+
+
+@admin.register(OffensiveTerm)
+class OffensiveTermAdmin(admin.ModelAdmin):
+    list_display = ("term", "category", "term_type", "language_code", "is_blocking", "is_active", "created_at")
+    list_filter = ("category", "term_type", "is_blocking", "is_active", "language_code")
+    search_fields = ("term",)
+    raw_id_fields = ("category",)
+    actions = ["mark_active", "mark_inactive"]
+
+    def mark_active(self, request, queryset):
+        queryset.update(is_active=True)
+    mark_active.short_description = "Mark selected as active"
+
+    def mark_inactive(self, request, queryset):
+        queryset.update(is_active=False)
+    mark_inactive.short_description = "Mark selected as inactive"
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        try:
+            from .censor_loader import invalidate_censor_cache
+            invalidate_censor_cache()
+        except Exception:
+            pass
+
+
+@admin.register(CensorLog)
+class CensorLogAdmin(admin.ModelAdmin):
+    list_display = ("id", "source", "blocked", "categories_display", "created_at")
+    list_filter = ("source", "blocked", "created_at")
+    search_fields = ("text_preview", "detected_terms")
+    readonly_fields = ("source", "categories", "detected_terms", "blocked", "text_preview", "created_at")
+
+    def categories_display(self, obj):
+        return ", ".join(obj.categories or []) if obj.categories else "-"
+    categories_display.short_description = "Categories"
+
+
+@admin.register(CensorTrainingExample)
+class CensorTrainingExampleAdmin(admin.ModelAdmin):
+    list_display = ("id", "is_toxic", "source", "score", "text_preview", "created_at")
+    list_filter = ("is_toxic", "source", "created_at")
+    search_fields = ("text",)
+    readonly_fields = ("text", "is_toxic", "source", "score", "created_at")
+
+    def text_preview(self, obj):
+        return (obj.text or "")[:80] + "..." if len(obj.text or "") > 80 else (obj.text or "")
+    text_preview.short_description = "Text"
