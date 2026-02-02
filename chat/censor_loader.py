@@ -1,7 +1,8 @@
 """
 Load offensive terms from DB (with cache) and AI censor.
 Flow: Our model first → OpenAI (if key set) → Google API fallback.
-Text: OpenAI Moderation API. Image: OCR + text censor + OpenAI Vision for image content.
+Text: OpenAI Moderation API (40+ languages, incl. European). Image: OCR + text censor + OpenAI Vision (any language).
+European languages: Included in PERSPECTIVE_LANGUAGES (en, de, fr, es, it, pt, nl, pl, ru, uk, cs, sk, hu, ro, bg, sr, hr, sl, el, sv, no, da, fi, et, lv, lt, ga, cy, ca, mt, is).
 """
 import base64
 import json
@@ -83,18 +84,28 @@ def our_model_predict(text: str) -> tuple[bool, float]:
         return False, 0.0
 
 
+# Google Perspective: European languages first (required), then rest of world
+PERSPECTIVE_LANGUAGES = [
+    # European (EU / Europe)
+    "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sk", "hu", "ro", "bg",
+    "sr", "hr", "sl", "el", "sv", "no", "da", "fi", "et", "lv", "lt", "ga", "cy", "ca", "mt", "is",
+    # Other
+    "ar", "hi", "zh", "zh-TW", "zh-CN", "ja", "ko", "th", "vi", "id", "ms", "tl",
+    "bn", "ta", "te", "mr", "gu", "kn", "pa", "ur", "fa", "tr", "sw", "am", "he",
+]
+
 def _google_api_check(text: str) -> tuple[bool, float]:
-    """Call Google Perspective API. Returns (is_toxic, score). On error returns (False, 0.0)."""
+    """Call Google Perspective API. Returns (is_toxic, score). Supports many languages via PERSPECTIVE_LANGUAGES."""
     api_key = getattr(settings, "PERSPECTIVE_API_KEY", None) or getattr(settings, "CENSOR_AI_API_KEY", None)
     if not api_key:
         return False, 0.0
-    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.7))
+    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.5))
     try:
         import requests
         url = "https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze"
         payload = {
             "comment": {"text": text[:20480]},
-            "languages": ["en", "ar", "hi", "es", "fr", "de", "pt", "ru", "zh", "ja"],
+            "languages": getattr(settings, "CENSOR_PERSPECTIVE_LANGUAGES", None) or PERSPECTIVE_LANGUAGES,
             "requestedAttributes": {
                 "TOXICITY": {},
                 "SEVERE_TOXICITY": {},
@@ -119,32 +130,47 @@ def _google_api_check(text: str) -> tuple[bool, float]:
 
 
 def _openai_text_check(text: str) -> Tuple[bool, float]:
-    """OpenAI Moderation API. Returns (is_toxic, score). On error returns (False, 0.0)."""
+    """OpenAI Moderation API – supports 40+ languages. Returns (is_toxic, score). On error (False, 0.0)."""
     api_key = getattr(settings, "OPENAI_API_KEY", None)
     if not api_key:
         return False, 0.0
-    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.7))
+    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.5))
+    model = (getattr(settings, "CENSOR_OPENAI_MODERATION_MODEL", None) or "").strip()
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-        r = client.moderations.create(input=text[:20480])
+        kwargs = {"input": text[:20480]}
+        if model:
+            kwargs["model"] = model
+        r = client.moderations.create(**kwargs)
         res = r.results[0]
         flagged = res.flagged
         scores = getattr(res, "category_scores", None) or {}
         score = max((float(v) for v in scores.values()), default=0.0)
-        is_toxic = flagged or (score >= threshold)
-        return is_toxic, score
+        return (flagged or (score >= threshold)), score
     except Exception as e:
+        if model:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=api_key)
+                r = client.moderations.create(input=text[:20480])
+                res = r.results[0]
+                flagged = res.flagged
+                scores = getattr(res, "category_scores", None) or {}
+                score = max((float(v) for v in scores.values()), default=0.0)
+                return (flagged or (score >= threshold)), score
+            except Exception:
+                pass
         logger.warning("OpenAI Moderation check failed: %s", e)
         return False, 0.0
 
 
 def _openai_image_check(image_bytes: bytes, content_type: Optional[str] = None) -> Tuple[bool, float]:
-    """OpenAI Vision: classify image as safe/unsafe. Returns (is_toxic, score). On error (False, 0.0)."""
+    """OpenAI Vision: classify image as safe/unsafe (any language). Returns (is_toxic, score). On error (False, 0.0)."""
     api_key = getattr(settings, "OPENAI_API_KEY", None)
     if not api_key:
         return False, 0.0
-    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.7))
+    threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.5))
     content_type = content_type or "image/jpeg"
     if "/" not in content_type:
         content_type = "image/jpeg"
@@ -154,9 +180,10 @@ def _openai_image_check(image_bytes: bytes, content_type: Optional[str] = None) 
         data_uri = f"data:{content_type};base64,{b64}"
         client = OpenAI(api_key=api_key)
         prompt = (
-            "Is this image safe for a general audience? Does it show violence, adult/sexual content, "
-            "drugs, weapons, illegal activity, or hate symbols? Reply ONLY with a single JSON object, "
-            "no other text: {\"safe\": true or false, \"score\": 0.0 to 1.0} where score is how unsafe (1=very unsafe)."
+            "Is this image safe for a general audience? Consider text and imagery in ANY language. "
+            "Does it show violence, adult/sexual content, drugs, weapons, illegal activity, or hate symbols? "
+            "Reply ONLY with a single JSON object, no other text: {\"safe\": true or false, \"score\": 0.0 to 1.0} "
+            "where score is how unsafe (1=very unsafe)."
         )
         msg = [
             {"type": "image_url", "image_url": {"url": data_uri}},
@@ -225,12 +252,12 @@ def ai_censor_check(text: str) -> tuple[bool, float, Optional[str]]:
         if is_toxic and score > 0:
             return True, score, "our_model"
 
-    # 2. OpenAI Moderation (if key set)
+    # 2. OpenAI Moderation (if key set) – always return provider + score for API response
     if getattr(settings, "OPENAI_API_KEY", None):
         is_toxic_o, score_o = _openai_text_check(text)
         _save_training_example(text, is_toxic=is_toxic_o, source="openai_moderation", score=score_o)
-        if is_toxic_o:
-            return True, score_o, "openai"
+        # Return score and provider even when safe, so API shows ai_provider / ai_toxic_score
+        return (True, score_o, "openai") if is_toxic_o else (False, score_o, "openai")
 
     # 3. Fallback: Google API
     api_key = getattr(settings, "PERSPECTIVE_API_KEY", None) or getattr(settings, "CENSOR_AI_API_KEY", None)
@@ -241,7 +268,7 @@ def ai_censor_check(text: str) -> tuple[bool, float, Optional[str]]:
     _save_training_example(text, is_toxic=is_toxic_google, source="google_api", score=score_google)
     if is_toxic_google:
         return True, score_google, "perspective"
-    return False, 0.0, None
+    return False, score_google, "perspective"
 
 
 def ai_censor_check_image(

@@ -12,7 +12,10 @@ daphne -b 0.0.0.0 -p 8000 shy2ask.asgi:application
 
 Or: `python manage.py runserver 0.0.0.0:8000`
 
-**API docs (Swagger):** http://0.0.0.0:8000/docs
+**Swagger UI (for UI / frontend devs):** [http://localhost:8000/docs](http://localhost:8000/docs) — open in browser to try all endpoints.  
+**OpenAPI schema:** [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)  
+**Swagger usage guide:** [docs/SWAGGER_UI.md](docs/SWAGGER_UI.md)  
+**Full API reference:** [docs/API.md](docs/API.md)
 
 ## Django Ninja API (Auth & Profile)
 

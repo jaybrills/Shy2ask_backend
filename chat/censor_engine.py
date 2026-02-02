@@ -95,7 +95,7 @@ BLOCKED_ILLEGAL = {
     "launder money", "money laundering", "fraud",
 }
 
-# ----- HUMAN TRAFFICKING / BUY-SELL PEOPLE (phrases, longest first) -----
+# ----- HUMAN TRAFFICKING / BUY-SELL PEOPLE (any language; phrases longest first) -----
 BLOCKED_PHRASES = [
     # Long phrases first
     "want to buy your girl", "want to buy your woman", "want to buy your boy", "want to buy your child",
@@ -115,15 +115,22 @@ BLOCKED_PHRASES = [
     "sell a girl", "sell a woman", "sell a boy", "sell a child", "sell a kid", "sell a man",
     "buy girl", "buy woman", "buy boy", "buy child", "buy kid", "buy person", "buy human",
     "sell girl", "sell woman", "sell boy", "sell child", "sell kid", "sell person", "sell human",
+    "i want girl", "want girl", "i want woman", "want woman", "i want boy", "want boy", "i want child", "want child",
     "purchase girl", "purchase woman", "purchase boy", "purchase child", "purchase kid", "purchase person",
     "selling girl", "selling woman", "selling boy", "selling child", "selling kid",
     "buying girl", "buying woman", "buying boy", "buying child", "buying kid",
     "buy daughter", "sell daughter", "buy son", "sell son",
     "order girl", "order woman", "order boy", "order child",
-    "girl for sale", "woman for sale", "boy for sale", "child for sale",
     "sell wife", "buy wife", "sell husband", "buy husband",
     "trafficking girl", "trafficking woman", "trafficking boy", "trafficking child",
     "human for sale", "person for sale",
+    # Multilingual (Punjabi, Hindi, Urdu, etc.) – security: block buy/sell/want + person terms
+    "i want kudi", "want kudi", "buy kudi", "sell kudi", "kudi for sale", "buy your kudi", "sell your kudi",
+    "i want ladki", "want ladki", "buy ladki", "sell ladki", "ladki for sale", "buy your ladki", "sell your ladki",
+    "i want larki", "want larki", "buy larki", "sell larki", "larki for sale",
+    "buy beti", "sell beti", "beti for sale", "want beti", "i want beti",
+    "buy baccha", "sell baccha", "baccha for sale", "want baccha", "buy bacha", "sell bacha",
+    "buy larki", "sell larki", "buy your larki", "sell your larki",
     # Evasive / slang
     "buy your grl", "sell your grl", "buy grl", "sell grl", "grl for sale",
     "buy your gurl", "sell your gurl", "buy gurl", "sell gurl",
@@ -143,15 +150,20 @@ EXPLOITATION_PHRASES = [
 ]
 EXPLOITATION_PHRASES.sort(key=len, reverse=True)
 
-# ----- WEAPONS -----
+# ----- WEAPONS (codes + phrases; any language) -----
 WEAPON_WORDS = [
+    # Phrases first
     "gun for sale", "guns for sale", "buy gun", "sell gun", "purchase gun",
     "firearm for sale", "buy firearm", "sell firearm",
     "ammo for sale", "buy ammo", "sell ammo", "ammunition for sale",
     "silencer for sale", "buy silencer", "suppressor for sale",
-    "assault rifle", "ak-47", "ar-15", "glock", "handgun", "rifle for sale",
-    "explosive for sale", "buy explosive", "c4", "dynamite", "grenade",
-    "weapon for sale", "buy weapon", "sell weapon", "illegal weapon",
+    "assault rifle", "rifle for sale",
+    "explosive for sale", "buy explosive", "weapon for sale", "buy weapon", "sell weapon", "illegal weapon",
+    "i want ak47", "want ak47", "i want gun", "want gun", "i want weapon", "want weapon",
+    "i want rifle", "want rifle", "i want glock", "want glock",
+    # Single words / codes (no hyphen so "ak47" and "ak-47" both caught)
+    "ak47", "ak 47", "ak-47", "ar15", "ar 15", "ar-15",
+    "glock", "handgun", "c4", "dynamite", "grenade",
 ]
 WEAPON_WORDS.sort(key=len, reverse=True)
 
@@ -465,16 +477,17 @@ def censor_text_full(
     clean, blocked = c, blocked or b
     all_detected.extend(d)
 
-    # 12. AI censor (multilingual toxicity)
+    # 12. AI censor (OpenAI / Google – multilingual; always set ai_provider + ai_toxic_score when used)
     if use_ai_censor:
         try:
             from django.conf import settings
             from .censor_loader import ai_censor_check
             if getattr(settings, "CENSOR_AI_ENABLED", True):
                 is_toxic, score, provider = ai_censor_check(text)
-                if is_toxic and score is not None:
+                if provider and score is not None:
                     ai_score = score
-                    ai_provider = provider or "ai"
+                    ai_provider = provider
+                if is_toxic:
                     blocked = True
                     all_detected.append({"term": "[AI detected]", "category": CATEGORY_AI_TOXIC})
         except Exception:

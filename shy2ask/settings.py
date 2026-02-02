@@ -202,10 +202,13 @@ CENSOR_USE_OUR_MODEL_FIRST = env("CENSOR_USE_OUR_MODEL_FIRST", "True", cast=bool
 CENSOR_MODEL_PATH = env("CENSOR_MODEL_PATH", "") or str(BASE_DIR / "media" / "censor_model.joblib")
 CENSOR_OUR_MODEL_THRESHOLD = float(env("CENSOR_OUR_MODEL_THRESHOLD", "0.6"))
 OPENAI_API_KEY = env("OPENAI_API_KEY", "")
-CENSOR_OPENAI_VISION_MODEL = env("CENSOR_OPENAI_VISION_MODEL", "gpt-4o-mini")  # image content check
+CENSOR_OPENAI_VISION_MODEL = env("CENSOR_OPENAI_VISION_MODEL", "gpt-4o-mini")  # image content check (any language)
+# omni-moderation-latest = 40+ languages; leave empty to use API default
+CENSOR_OPENAI_MODERATION_MODEL = env("CENSOR_OPENAI_MODERATION_MODEL", "omni-moderation-latest")
 PERSPECTIVE_API_KEY = env("PERSPECTIVE_API_KEY", "")
 CENSOR_AI_API_KEY = env("CENSOR_AI_API_KEY", "") or PERSPECTIVE_API_KEY
-CENSOR_AI_THRESHOLD = float(env("CENSOR_AI_THRESHOLD", "0.7"))
+# 0.5 = stricter (more languages / borderline content flagged); 0.7 = less strict
+CENSOR_AI_THRESHOLD = float(env("CENSOR_AI_THRESHOLD", "0.5"))
 CENSOR_SAVE_SAFE_EXAMPLES = env("CENSOR_SAVE_SAFE_EXAMPLES", "False", cast=bool)
 
 REST_FRAMEWORK = {
