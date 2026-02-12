@@ -24,7 +24,20 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # Use any detected country code from earlier logic (if available)
         country_code = getattr(self.request, "detected_country", "") or ""
-        serializer.save(country_code=country_code)
+        instance = serializer.save(country_code=country_code)
+
+        # Trigger real-time notifications for the newly created request
+        try:
+            from .views import send_notification
+            send_notification(
+                subject="New request created",
+                body=f"Your request with tracking code {instance.tracking_code} has been created successfully.",
+                recipient=instance.requester_email,
+                related_request=instance,
+                use_ai_enhance=True
+            )
+        except Exception as e:
+            print(f"Error sending initial notification: {e}")
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):

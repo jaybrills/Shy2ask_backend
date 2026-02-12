@@ -101,7 +101,15 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     notification_info = message_data.pop("notification_info", None)
                     if notification_info:
                         await self.send_notifications_for_message(notification_info)
-                    
+                    # AI deal detection (fire-and-forget): detect deal from conversation, create Deal, notify subscribers
+                    try:
+                        import asyncio
+                        from .ai_services import run_deal_detection_and_notify
+                        asyncio.get_event_loop().run_in_executor(
+                            None, run_deal_detection_and_notify, self.request_id
+                        )
+                    except Exception:
+                        pass
                     # Send message to room group
                     await self.channel_layer.group_send(
                         self.room_group_name,

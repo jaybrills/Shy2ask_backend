@@ -11,6 +11,7 @@ from .models import (
     Notification,
     OffensiveTerm,
     ShyRequest,
+    Subscription,
 )
 
 
@@ -66,8 +67,16 @@ class NotificationAdmin(admin.ModelAdmin):
 
 @admin.register(Deal)
 class DealAdmin(admin.ModelAdmin):
-    list_display = ("request", "amount", "currency", "platform_fee", "status", "payer")
-    list_filter = ("status", "currency")
+    list_display = ("request", "amount", "currency", "platform_fee", "status", "payer", "ai_detected")
+    list_filter = ("status", "currency", "ai_detected")
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("user", "request", "subscription_type", "is_active", "created_at")
+    list_filter = ("subscription_type", "is_active")
+    search_fields = ("user__email",)
+    raw_id_fields = ("user", "request")
 
 
 # ----- Censor engine (DB terms + logs) -----

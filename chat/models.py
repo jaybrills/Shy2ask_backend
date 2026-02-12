@@ -183,6 +183,8 @@ class Deal(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROPOSED)
     payment_reference = models.CharField(max_length=120, blank=True)
     invoice_number = models.CharField(max_length=40, blank=True)
+    ai_detected = models.BooleanField(default=False, help_text="True if deal was detected by AI from conversation.")
+    ai_summary = models.TextField(blank=True, help_text="AI-generated summary of the deal.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -199,6 +201,31 @@ class Deal(models.Model):
         self.payment_reference = reference
         self.status = self.Status.PAID
         self.save(update_fields=["payment_reference", "status", "updated_at", "platform_fee"])
+
+
+class Subscription(models.Model):
+    """User subscriptions: request updates, deal alerts, optional daily digest (all AI-enhanced)."""
+    class Type(models.TextChoices):
+        REQUEST_UPDATES = ("request_updates", "Request updates (new messages)")
+        DEAL_ALERTS = ("deal_alerts", "Deal alerts (AI-detected deals)")
+        DAILY_DIGEST = ("daily_digest", "Daily digest (AI summary)")
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="subscriptions"
+    )
+    request = models.ForeignKey(
+        ShyRequest, on_delete=models.CASCADE, null=True, blank=True, related_name="subscriptions"
+    )
+    subscription_type = models.CharField(max_length=30, choices=Type.choices)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["user", "request", "subscription_type"]]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user_id} {self.get_subscription_type_display()} ({self.request_id or 'all'})"
 
 
 # ----- Censor engine: store offensive terms in DB (any language) -----

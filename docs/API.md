@@ -470,3 +470,14 @@ Use **ws://** on HTTP and **wss://** on HTTPS (same path). Example: `wss://yourd
 ```http
 Authorization: Bearer <token>
 ```
+
+---
+
+## 6. AI-based notifications, deal detection, subscriptions
+
+- **Notifications:** When `OPENAI_API_KEY` is set, notification subject/body are made short and engaging via OpenAI before sending (email + WebSocket).
+- **Deal detection:** After each new message in a conversation, AI analyzes the thread. If a deal/amount is detected, a **Deal** is created (or updated) and **deal_alerts** subscribers get a WebSocket notification.
+- **Subscriptions (Bearer):**
+  - **GET /subscriptions** – list my subscriptions.
+  - **POST /subscriptions** – subscribe. Body: `{"subscription_type": "request_updates"|"deal_alerts"|"daily_digest", "request_id": 123}`. For `request_updates`, `request_id` is required; for `deal_alerts`, omit `request_id`.
+  - **DELETE /subscriptions/{id}** – unsubscribe (deactivate).

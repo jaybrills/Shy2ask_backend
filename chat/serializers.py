@@ -90,12 +90,16 @@ class ShyRequestSerializer(serializers.ModelSerializer):
         requester_alias = validated_data.pop("requester_alias", None) or ""
         if user and not requester_alias:
             requester_alias = getattr(user, "alias_name", "") or ""
+
+        from .models import Conversation
+        country_code = validated_data.pop("country_code", None) or self.context.get("country_code", "")
         shy_request = ShyRequest.objects.create(
             user=user,
             requester_alias=requester_alias,
             status=ShyRequest.Status.SUBMITTED,
-            country_code=self.context.get("country_code", ""),
+            country_code=country_code,
             **validated_data,
         )
+        Conversation.objects.create(request=shy_request)
         return shy_request
 
