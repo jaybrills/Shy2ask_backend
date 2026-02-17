@@ -7,6 +7,7 @@ from account.api import auth_router, profile_router
 from chat.censor_api import censor_router
 from chat.realtime_api import realtime_router
 from chat.subscription_api import subscription_router
+from .parser import FlexibleParser
 
 # Base URL for Swagger "Try it out" (UI devs). Prefer request host so /docs works on any domain.
 def _get_servers():
@@ -28,6 +29,7 @@ api = NinjaAPI(
     ),
     docs_url="/docs",
     openapi_url="/openapi.json",
+    parser=FlexibleParser(),
     openapi_extra={
         "servers": _get_servers(),
         "tags": [

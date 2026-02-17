@@ -22,9 +22,11 @@ dist/
 # Maven
 target/
 venv/
+.venv/
 
 # JetBrains IDE
 .idea/
+.vscode/
 
 # Unit test reports
 TEST*.xml

@@ -6,6 +6,7 @@ Django Ninja auth and profile API.
 from typing import Optional
 
 from django.contrib.auth import authenticate
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import HttpRequest
 from ninja import File, Router, Schema, UploadedFile
@@ -157,14 +158,17 @@ def register(request, payload: RegisterIn):
                 "message": "Verification OTP resent. Please verify your email.",
             }
         return 400, {"detail": "A user with this email already exists."}
-    user = User.objects.create_user(
-        email=payload.email,
-        password=payload.password,
-        first_name=payload.first_name or "",
-        last_name=payload.last_name or "",
-        alias_name=payload.alias_name or "",
-        phone_number=payload.phone_number or "",
-    )
+    try:
+        user = User.objects.create_user(
+            email=payload.email,
+            password=payload.password,
+            first_name=payload.first_name or "",
+            last_name=payload.last_name or "",
+            alias_name=payload.alias_name or "",
+            phone_number=payload.phone_number or "",
+        )
+    except ValidationError as e:
+        return 400, {"detail": getattr(e, "message_dict", e.messages)}
     user.is_verified = False
     user.save(update_fields=["is_verified"])
     create_and_send_verification_otp(user)
@@ -175,6 +179,7 @@ def register(request, payload: RegisterIn):
         "first_name": user.first_name,
         "last_name": user.last_name,
         "alias_name": user.alias_name,
+        "phone_number": user.phone_number,
         "is_verified": False,
         "token": token.key,
         "message": "Please verify your email with the OTP sent to your inbox.",

@@ -27,10 +27,17 @@ def env(key, default=None, cast=str):
     return str(v)
 
 
+def env_list(key, default=""):
+    return [item.strip() for item in env(key, default).split(",") if item.strip()]
+
+
 # Django
 SECRET_KEY = env("SECRET_KEY", "django-insecure-change-me")
 DEBUG = env("DEBUG", "True", cast=bool)
-ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,10.0.2.2")
+if DEBUG and "*" not in ALLOWED_HOSTS:
+    # Dev default: avoid host-header rejects from emulator/LAN testing.
+    ALLOWED_HOSTS.append("*")
 
 
 # Application definition
@@ -51,17 +58,20 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'account',
     'chat',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'ninja.compatibility.files.fix_request_files_middleware',
     'django.middleware.security.SecurityMiddleware',
+    # Must be before CommonMiddleware so CORS headers are added to all responses.
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'ninja.compatibility.files.fix_request_files_middleware',
 ]
 
 ROOT_URLCONF = 'shy2ask.urls'
@@ -162,10 +172,28 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Security (from env)
-CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("CSRF_TRUSTED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000,http://10.0.2.2:8000",
+)
 SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "False", cast=bool)
 SESSION_COOKIE_SECURE = env("SESSION_COOKIE_SECURE", "False", cast=bool)
 CSRF_COOKIE_SECURE = env("CSRF_COOKIE_SECURE", "False", cast=bool)
+
+# CORS
+CORS_ALLOW_ALL_ORIGINS = env("CORS_ALLOW_ALL_ORIGINS", str(DEBUG), cast=bool)
+CORS_ALLOWED_ORIGINS = env_list(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,"
+    "http://localhost:8081,http://127.0.0.1:8081,http://10.0.2.2:8081",
+)
+# Allow LAN dev clients (e.g. physical phone on same Wi-Fi).
+CORS_ALLOWED_ORIGIN_REGEXES = env_list(
+    "CORS_ALLOWED_ORIGIN_REGEXES",
+    r"^https?://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$,"
+    r"^https?://10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$,"
+    r"^https?://172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$",
+)
 
 # Logging
 LOG_LEVEL = env("LOG_LEVEL", "INFO")
