@@ -5,7 +5,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from .managers import UserManager
-from .validators import validate_phone_number
+from .validators import validate_phone_number, validate_disposable_email
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -18,6 +18,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         _('email address'),
         unique=True,
         db_index=True,
+        validators=[validate_disposable_email],
         help_text=_('Required. Enter a valid email address.')
     )
     

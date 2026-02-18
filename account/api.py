@@ -6,6 +6,7 @@ Django Ninja auth and profile API.
 from typing import Optional
 
 from django.contrib.auth import authenticate
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import HttpRequest
 from ninja import File, Router, Schema, UploadedFile
@@ -19,6 +20,7 @@ from .services import (
     verify_otp_and_reset_password,
     verify_email_otp,
 )
+from .validators import validate_disposable_email
 
 auth_router = Router(tags=["Auth"])
 profile_router = Router(tags=["Profile"])
@@ -70,6 +72,15 @@ class ResendVerificationIn(Schema):
 
 
 class ResendVerificationOut(Schema):
+    message: str
+
+
+class CheckEmailIn(Schema):
+    email: str
+
+
+class CheckEmailOut(Schema):
+    is_available: bool
     message: str
 
 
@@ -141,6 +152,11 @@ class AuthBearer(HttpBearer):
 @auth_router.post("/register", response={201: RegisterOut, 400: dict})
 def register(request, payload: RegisterIn):
     """Register a new user. Email verification OTP is sent; verify with /auth/verify-email."""
+    try:
+        validate_disposable_email(payload.email)
+    except ValidationError as e:
+        return 400, {"detail": str(e.message)}
+
     existing = User.objects.filter(email__iexact=payload.email).first()
     if existing:
         if not existing.is_verified:
@@ -234,6 +250,11 @@ def reset_password(request, payload: ResetPasswordIn):
 @auth_router.post("/verify-email", response={200: VerifyEmailOut, 400: dict})
 def verify_email(request, payload: VerifyEmailIn):
     """Verify email with OTP sent after register. Requires email + otp_code."""
+    try:
+        validate_disposable_email(payload.email)
+    except ValidationError as e:
+        return 400, {"detail": str(e.message)}
+    
     user = verify_email_otp(payload.email, payload.otp_code)
     if not user:
         return 400, {"detail": "Invalid or expired OTP code. Request a new one via resend-verification."}
@@ -254,6 +275,11 @@ def verify_email(request, payload: VerifyEmailIn):
 @auth_router.post("/resend-verification", response={200: ResendVerificationOut, 400: dict})
 def resend_verification(request, payload: ResendVerificationIn):
     """Resend email verification OTP. Use if user did not receive or OTP expired."""
+    try:
+        validate_disposable_email(payload.email)
+    except ValidationError as e:
+        return 400, {"detail": str(e.message)}
+        
     user = User.objects.filter(email__iexact=payload.email.strip()).first()
     if not user:
         return 200, {"message": "If an account exists for this email, a verification code has been sent."}
@@ -261,6 +287,30 @@ def resend_verification(request, payload: ResendVerificationIn):
         return 400, {"detail": "Email is already verified."}
     create_and_send_verification_otp(user)
     return 200, {"message": "Verification code sent. Check your email."}
+
+
+@auth_router.post("/check-email", response={200: CheckEmailOut, 400: dict})
+def check_email(request, payload: CheckEmailIn):
+    """Check if an email is available for registration and valid."""
+    try:
+        validate_disposable_email(payload.email)
+    except ValidationError as e:
+        return 200, {
+            "is_available": False,
+            "message": str(e.message)
+        }
+
+    existing = User.objects.filter(email__iexact=payload.email).exists()
+    if existing:
+        return 200, {
+            "is_available": False,
+            "message": "This email is already registered."
+        }
+    
+    return 200, {
+        "is_available": True,
+        "message": "Email is available."
+    }
 
 
 # ---------- Profile (authenticated) ----------

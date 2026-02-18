@@ -83,6 +83,55 @@ def validate_phone_number(value):
         )
 
 
+def validate_disposable_email(value):
+    """
+    Validates that the email address does not use a disposable domain.
+    """
+    disposable_domains = [
+        'example.com',
+        'mailinator.com',
+        'guerrillamail.com',
+        'yopmail.com',
+        'trashmail.com',
+        'temp-mail.org',
+        'fake-mail.com',
+        '10minutemail.com',
+        'throwawaymail.com',
+        'getairmail.com',
+        'sharklasers.com',
+        'dispostable.com',
+        'mailautotrash.com',
+        'tempmailo.com',
+        'tempr.email',
+        'tempmailcheck.com',
+        'mohmal.com',
+        'crazymailing.com',
+        'dropmail.me',
+        'emlhub.com',
+        'maildrop.cc',
+        'mintemail.com',
+        'mytrashmail.com',
+        'tempmail.net',
+        'tmpmail.net',
+        'spamgourmet.com',
+        'spam4.me',
+        'spamherelots.com',
+        'spamthis.co.uk',
+        'spamthis.com',
+        'today.com.au',
+    ]
+    
+    if not value or '@' not in value:
+        return
+        
+    domain = value.split('@')[-1].lower()
+    if domain in disposable_domains:
+        raise ValidationError(
+            _('Disposable email addresses are not allowed. Please use a valid email address.'),
+            code='disposable_email'
+        )
+
+
 class PhoneNumberValidator:
     """
     Django validator class for phone numbers.
@@ -93,4 +142,3 @@ class PhoneNumberValidator:
     
     def __eq__(self, other):
         return isinstance(other, PhoneNumberValidator)
-
