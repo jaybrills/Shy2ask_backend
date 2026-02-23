@@ -27,6 +27,7 @@ class ShyRequest(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
+    
     tracking_code = models.CharField(max_length=12, unique=True, blank=True)
     requester_name = models.CharField(max_length=120)
     requester_email = models.EmailField()
@@ -36,6 +37,7 @@ class ShyRequest(models.Model):
         blank=True,
         help_text="Display name for this request (e.g. in chat). If blank, profile alias or requester_name is used.",
     )
+
 
     target_name = models.CharField(max_length=120, blank=True)
     target_email = models.EmailField(blank=True)
