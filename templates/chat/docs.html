@@ -1,0 +1,91 @@
+{% extends "chat/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-7xl mx-auto">
+        <div class="lg:flex lg:gap-8">
+            <!-- Sidebar -->
+            <aside class="hidden lg:block lg:w-64 flex-shrink-0">
+                <nav class="sticky top-8 space-y-1">
+                    <a href="#introduction" class="text-gray-900 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        Introduction
+                    </a>
+                    <a href="#how-it-works" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        How it Works
+                    </a>
+                    <a href="#api-reference" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        API Reference
+                    </a>
+                    <a href="#websockets" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        WebSockets (WSS)
+                    </a>
+                    <a href="#security" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        Security & Privacy
+                    </a>
+                </nav>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="flex-1 overflow-hidden bg-white shadow sm:rounded-lg border-4 border-black">
+                <div class="px-4 py-5 sm:p-6 space-y-12">
+                    <section id="introduction">
+                        <h1 class="text-4xl font-black text-gray-900 mb-4" style="font-family: 'Fredoka One', cursive;">Documentation</h1>
+                        <p class="text-lg text-gray-600 leading-relaxed">
+                            Welcome to the Shy2Ask documentation. Our platform allows you to bridge the gap between shyness and action by relaying your questions anonymously.
+                        </p>
+                    </section>
+
+                    <section id="how-it-works" class="pt-8 border-t-4 border-black">
+                        <h2 class="text-2xl font-black text-gray-900 mb-4">How it Works</h2>
+                        <div class="prose prose-blue max-w-none text-gray-600">
+                            <p>Shy2Ask acts as a trusted intermediary. When you submit a request, we:</p>
+                            <ul class="list-disc pl-5 space-y-2">
+                                <li><strong>Validate:</strong> Ensure the request is lawful and respectful.</li>
+                                <li><strong>Relay:</strong> Contact the recipient via your chosen method (Email, Letter, or Phone).</li>
+                                <li><strong>Maintain Anonymity:</strong> Your identity is never revealed to the recipient.</li>
+                                <li><strong>Facilitate Communication:</strong> Relay responses back to you through our secure platform.</li>
+                            </ul>
+                        </div>
+                    </section>
+
+                    <section id="api-reference" class="pt-8 border-t-4 border-black">
+                        <h2 class="text-2xl font-black text-gray-900 mb-4">API Reference</h2>
+                        <p class="text-gray-600 mb-4">Our backend provides a RESTful API for integration.</p>
+                        <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white">
+                            <p>GET /api/requests/</p>
+                            <p class="text-gray-400"># Lists all your active requests</p>
+                        </div>
+                    </section>
+
+                    <section id="websockets" class="pt-8 border-t-4 border-black">
+                        <h2 class="text-2xl font-black text-gray-900 mb-4">WebSockets (WSS)</h2>
+                        <p class="text-gray-600 mb-4">Real-time updates are handled via WebSockets (WSS).</p>
+                        <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-blue-700">
+                                        WSS endpoint: <code>wss://backend.shy2ask.com/ws/chat/{request_id}/</code>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="security" class="pt-8 border-t-4 border-black pb-8">
+                        <h2 class="text-2xl font-black text-gray-900 mb-4">Security & Privacy</h2>
+                        <p class="text-gray-600 leading-relaxed">
+                            Privacy is our core value. All data is encrypted at rest and in transit. We strictly adhere to Swiss data protection standards.
+                        </p>
+                    </section>
+                </div>
+            </main>
+        </div>
+    </div>
+</div>
+{% endblock %}
