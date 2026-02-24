@@ -12,6 +12,7 @@ from .api import api
 _ninja_urls = api.urls
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("", include("account.urls", namespace="account")),
     path("api/", include("chat.api_urls")),
     path("", include((_ninja_urls[0], _ninja_urls[2]))),
 ]

@@ -20,17 +20,18 @@
             <span class="logo-text">Shy2Ask</span>
         </div>
         <nav class="main-nav">
-            <a href="{% url 'core:home' %}">Home</a>
-            <a href="{% url 'core:request_create' %}">Create request</a>
-            <a href="{% url 'core:pricing' %}">Pricing</a>
-            <a href="{% url 'core:features' %}">Features</a>
-            <a href="{% url 'core:track' %}">Track</a>
+            <a href="{% url 'account:home' %}">Home</a>
+            <a href="#">Create request</a>
+            <a href="#">Pricing</a>
+            <a href="#">Features</a>
+            <a href="#">Track</a>
+            <a href="/docs">Docs</a>
             {% if user.is_authenticated %}
-                <a href="{% url 'core:dashboard' %}">Dashboard</a>
-                <a href="{% url 'logout' %}">Logout</a>
+                <a href="#">Dashboard</a>
+                <a href="#">Logout</a>
             {% else %}
-                <a href="{% url 'login' %}">Login</a>
-                <a class="btn btn-primary btn-sm" href="{% url 'core:signup' %}">Register</a>
+                <a href="#">Login</a>
+                <a class="btn btn-primary btn-sm" href="#">Register</a>
             {% endif %}
         </nav>
     </header>

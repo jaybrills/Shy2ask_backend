@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="g3" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c8f7dc"/>
+      <stop offset="100%" stop-color="#e0f3ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="800" fill="url(#g3)"/>
+  <g fill="#1e1b3a" opacity="0.25">
+    <rect x="120" y="220" width="1040" height="340" rx="32"/>
+  </g>
+  <g stroke="#1e1b3a" stroke-width="12" fill="none" stroke-linecap="round">
+    <path d="M200 520 C 360 420 520 420 700 500 C 920 600 1100 520 1220 460"/>
+    <path d="M360 380 Q 520 320 680 360 Q 860 410 1040 340"/>
+  </g>
+  <g fill="#f7a531">
+    <circle cx="260" cy="360" r="20"/>
+    <circle cx="520" cy="320" r="16"/>
+    <circle cx="780" cy="360" r="18"/>
+    <circle cx="1020" cy="320" r="20"/>
+    <circle cx="640" cy="480" r="16"/>
+    <circle cx="920" cy="500" r="18"/>
+  </g>
+  <g fill="#1e1b3a" font-family="Arial, sans-serif" font-weight="700" font-size="42">
+    <text x="200" y="180">Deal sealed — only 3% fee</text>
+    <text x="200" y="230" font-size="24">Friendly greens + sky tones</text>
+  </g>
+</svg>
+

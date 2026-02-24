@@ -18,13 +18,13 @@
           You stay anonymous. We reach out with your question using email, letter, or phone—without revealing who you are.
         </p>
         <div class="flex flex-wrap gap-4">
-          <a class="btn btn-primary btn-lg border-4 border-black shadow-lg transform hover:scale-110 transition-transform" href="{% url 'core:request_create' %}">
+          <a class="btn btn-primary btn-lg border-4 border-black shadow-lg transform hover:scale-110 transition-transform" href="#">
             🎯 Create a shy request
           </a>
           <a class="btn btn-outline btn-lg border-4 border-black shadow-lg" href="#how-it-works">How it works</a>
         </div>
         <p class="text-sm text-gray-600 font-bold">
-          📍 Detected location: {{ detected_country }} — service available only in Switzerland.
+          📍 Detected location: {{ detected_country|default:"Switzerland" }} — service available only in Switzerland.
         </p>
       </div>
 
@@ -267,7 +267,7 @@
             <p class="text-xl font-semibold text-gray-700">It takes less than 2 minutes to create a shy request. We handle the rest.</p>
           </div>
           <div class="card-actions">
-            <a href="{% url 'core:request_create' %}" class="btn btn-primary btn-lg border-4 border-black shadow-2xl transform hover:scale-110 transition-transform text-xl font-black">
+            <a href="#" class="btn btn-primary btn-lg border-4 border-black shadow-2xl transform hover:scale-110 transition-transform text-xl font-black">
               Start now! 🎯
             </a>
           </div>
