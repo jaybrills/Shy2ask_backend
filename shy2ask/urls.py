@@ -9,7 +9,7 @@ from django.urls import include, path
 
 from .api import api
 
-_ninja_urls = api.urls
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("account.urls", namespace="account")),

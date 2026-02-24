@@ -20,6 +20,7 @@ def _get_servers():
 api = NinjaAPI(
     title="Shy2Ask API",
     version="1.0.0",
+    urls_namespace="main_api",
     description=(
         "**Auth:** register, login (email + OTP verification), forgot/reset password. "
         "**Profile:** GET/PATCH /profile/me, list users (staff). "
