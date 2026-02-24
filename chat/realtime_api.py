@@ -1,6 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 from ninja import Router, Schema, ModelSchema
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from .models import ShyRequest, Conversation, Message, Attachment
 from account.api import AuthBearer
@@ -65,10 +66,10 @@ class ShyRequestOut(Schema):
 
 # ---------- Endpoints ----------
 
-@realtime_router.post("/", response={201: ShyRequestOut})
+@realtime_router.post("/", response={201: ShyRequestOut}, auth=AuthBearer())
 def create_request(request, payload: ShyRequestIn):
     """Create a new ShyRequest. Automatically creates a Conversation and sends notifications."""
-    user = request.user if request.user.is_authenticated else None
+    user = request.auth
     
     # Logic from ShyRequestSerializer.create
     alias = payload.requester_alias or ""
@@ -105,7 +106,10 @@ def create_request(request, payload: ShyRequestIn):
 @realtime_router.get("/", response=List[ShyRequestOut], auth=AuthBearer())
 def list_requests(request):
     """List requests for the logged-in user."""
-    qs = ShyRequest.objects.filter(user=request.auth).order_by("-created_at")
+    user = request.auth
+    qs = ShyRequest.objects.filter(
+        Q(user=user) | Q(user__isnull=True, requester_email__iexact=user.email)
+    ).order_by("-created_at")
     return [_shy_request_to_dict(r) for r in qs]
 
 @realtime_router.get("/{request_id}/conversation", response=List[MessageOut])
