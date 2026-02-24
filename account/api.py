@@ -406,6 +406,3 @@ def list_users(request, limit: int = 20, offset: int = 0, search: Optional[str] 
         ],
     }
 
-
-
-
