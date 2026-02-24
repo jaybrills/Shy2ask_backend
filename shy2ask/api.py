@@ -27,8 +27,8 @@ api = NinjaAPI(
         "**Requests:** Create and list shy requests, manage conversations. "
         "Protected routes use **Bearer token** (Header: `Authorization: Bearer <token>`)."
     ),
-    docs_url="/docs",
-    openapi_url="/openapi.json",
+    docs_url="docs",
+    openapi_url="openapi.json",
     parser=FlexibleParser(),
     openapi_extra={
         "servers": _get_servers(),
