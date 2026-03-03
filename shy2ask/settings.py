@@ -133,7 +133,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # Security (from env)
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:8000,http://127.0.0.1:8000,http://10.0.2.2:8000"
+    "http://localhost:8000,http://127.0.0.1:8000,http://10.0.2.2:8000",
     "https://backend.shy2ask.com",
 ]
 # SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT")
