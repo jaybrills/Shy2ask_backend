@@ -1,0 +1,300 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="w-full h-screen bg-gradient-to-br from-yellow-50 via-purple-50 to-blue-50 flex flex-col" hx-ext="ws" ws-connect="/ws/chat/{{ request_obj.pk }}/">
+  
+  <!-- Chat Header - Fixed Top - 70s-80s Comic Style -->
+  <div class="bg-gradient-to-r from-purple-500 via-pink-500 to-orange-500 border-b-4 border-black shadow-2xl p-4 md:p-6 relative overflow-hidden">
+    <!-- Comic pattern overlay -->
+    <div class="absolute inset-0 opacity-10" style="background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.1) 10px, rgba(0,0,0,0.1) 20px);"></div>
+    
+    <div class="flex items-center justify-between relative z-10">
+      <div class="flex items-center gap-4">
+        <a href="{% url 'core:dashboard' %}" class="btn btn-circle btn-lg border-4 border-black bg-yellow-400 hover:bg-yellow-300 text-black font-black shadow-2xl transform hover:scale-110 transition-transform text-xl">
+          ←
+        </a>
+        <div>
+          <div class="flex items-center gap-3 mb-1">
+            <h1 class="text-3xl md:text-4xl font-black text-white drop-shadow-[4px_4px_0px_rgba(0,0,0,0.3)]" style="font-family: 'Fredoka One', cursive; text-shadow: 3px 3px 0px rgba(0,0,0,0.5);">
+              💬 CHAT
+            </h1>
+            <div class="badge badge-lg border-4 border-black bg-yellow-400 text-black font-black shadow-xl px-3 py-1 transform rotate-[-5deg]">
+              HTMX WS
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="badge border-3 border-black bg-white text-purple-600 font-black shadow-lg px-2 py-1 text-xs">
+              REQ #{{ request_obj.tracking_code }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="badge badge-lg border-4 border-black bg-white text-purple-600 font-black shadow-2xl px-4 py-2 transform hover:rotate-2 transition-transform">
+          <span class="text-xs mr-1">📊</span>{{ request_obj.get_status_display|upper }}
+        </div>
+        <a href="{% url 'core:request_detail' request_obj.pk %}" class="btn btn-lg border-4 border-black bg-yellow-400 hover:bg-yellow-300 text-black font-black shadow-2xl transform hover:scale-110 transition-transform">
+          📋 DETAILS
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Messages Area - Scrollable -->
+  <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4" id="chat-messages" hx-swap-oob="true">
+    {% for m in messages %}
+      <div class="flex {% if m.sender == 'requester' %}justify-end{% else %}justify-start{% endif %} animate-fade-in" id="message-{{ m.id }}">
+        <div class="max-w-[85%] md:max-w-[70%] flex gap-3 {% if m.sender == 'requester' %}flex-row-reverse{% endif %}">
+          
+          <!-- Avatar -->
+          <div class="flex-shrink-0">
+            <div class="w-12 h-12 md:w-14 md:h-14 rounded-full border-4 border-black flex items-center justify-center text-2xl md:text-3xl font-black shadow-2xl transform hover:scale-110 transition-transform {% if m.sender == 'requester' %}bg-yellow-400{% else %}bg-blue-400{% endif %}">
+              {% if m.sender == 'requester' %}👤{% else %}🏢{% endif %}
+            </div>
+          </div>
+          
+          <!-- Message Bubble - 70s-80s Comic Style -->
+          <div class="flex flex-col {% if m.sender == 'requester' %}items-end{% else %}items-start{% endif %}">
+            <!-- Comic Badge for Sender Name & Time -->
+            <div class="flex items-center gap-2 mb-2">
+              <div class="badge border-4 border-black {% if m.sender == 'requester' %}bg-yellow-400{% else %}bg-blue-400{% endif %} text-black font-black shadow-xl px-3 py-1 transform {% if m.sender == 'requester' %}rotate-2{% else %}rotate-[-2deg]{% endif %} hover:scale-110 transition-transform">
+                <span class="text-xs md:text-sm">
+                  {% if m.sender == 'requester' %}👤 YOU{% else %}🏢 SHY2ASK{% endif %}
+                </span>
+              </div>
+              <div class="badge border-3 border-black bg-white text-gray-700 font-black shadow-lg px-2 py-1 text-xs transform rotate-1">
+                {{ m.created_at|date:"M d" }} • {{ m.created_at|date:"H:i" }}
+              </div>
+            </div>
+            
+            {% if m.is_blocked %}
+              <!-- Blocked Message - Comic Warning Style -->
+              <div class="bg-red-200 border-4 border-red-600 rounded-2xl {% if m.sender == 'requester' %}rounded-tr-none{% else %}rounded-tl-none{% endif %} p-4 md:p-5 shadow-2xl transform hover:scale-[1.02] transition-transform relative overflow-hidden">
+                <!-- Comic pattern -->
+                <div class="absolute inset-0 opacity-20" style="background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px);"></div>
+                <div class="relative z-10">
+                  <div class="flex items-center gap-2 mb-2">
+                    <span class="text-3xl">🚫</span>
+                    <div class="badge border-4 border-red-800 bg-red-400 text-red-900 font-black shadow-xl px-3 py-1 transform rotate-[-3deg]">
+                      BLOCKED!
+                    </div>
+                  </div>
+                  <p class="font-black text-red-900 text-sm md:text-base">
+                    This message contained abusive or harmful content and was automatically blocked.
+                  </p>
+                </div>
+              </div>
+            {% else %}
+              <!-- Normal Message Bubble - Comic Speech Bubble Style -->
+              <div class="{% if m.sender == 'requester' %}bg-yellow-300 border-4 border-yellow-600 rounded-2xl rounded-tr-none{% else %}bg-blue-300 border-4 border-blue-600 rounded-2xl rounded-tl-none{% endif %} p-4 md:p-5 shadow-2xl transform hover:scale-[1.02] transition-transform relative overflow-hidden" style="position: relative;">
+                <!-- Comic dots pattern overlay -->
+                <div class="absolute inset-0 opacity-10" style="background-image: radial-gradient(circle, rgba(0,0,0,0.3) 1px, transparent 1px); background-size: 8px 8px;"></div>
+                <!-- Speech bubble tail -->
+                <div class="absolute {% if m.sender == 'requester' %}right-[-8px] bottom-4{% else %}left-[-8px] bottom-4{% endif %} w-6 h-6 {% if m.sender == 'requester' %}bg-yellow-300 border-4 border-yellow-600{% else %}bg-blue-300 border-4 border-blue-600{% endif %} border-t-0 border-l-0 rotate-45 transform"></div>
+                <p class="font-black text-gray-900 whitespace-pre-wrap text-sm md:text-base leading-relaxed relative z-10" style="text-shadow: 1px 1px 0px rgba(255,255,255,0.5);">
+                  {{ m.clean_body|default:m.body }}
+                </p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% empty %}
+      <!-- Empty State - Comic Style -->
+      <div class="flex-1 flex items-center justify-center h-full">
+        <div class="text-center">
+          <div class="text-8xl mb-6 animate-bounce">💭</div>
+          <div class="badge badge-lg border-4 border-black bg-yellow-400 text-black font-black shadow-2xl px-6 py-3 mb-4 transform rotate-[-3deg] inline-block">
+            NO MESSAGES YET!
+          </div>
+          <p class="text-xl md:text-2xl font-black text-gray-700 mb-4" style="font-family: 'Fredoka One', cursive;">
+            Start the conversation below 👇
+          </p>
+          <div class="badge border-3 border-black bg-blue-200 text-blue-900 font-black shadow-lg px-4 py-2 text-sm transform rotate-2 inline-block">
+            💬 Type your first message!
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Chat Input Area - Fixed Bottom - Comic Style -->
+  <div class="bg-gradient-to-r from-white to-gray-100 border-t-4 border-black shadow-2xl p-4 md:p-6 relative overflow-hidden">
+    <!-- Comic pattern -->
+    <div class="absolute inset-0 opacity-5" style="background-image: repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.1) 20px, rgba(0,0,0,0.1) 40px);"></div>
+    
+    <form ws-send class="flex gap-3 items-end relative z-10" id="chat-form">
+      {% csrf_token %}
+      <div class="flex-1 relative">
+        <textarea name="body" id="message-body" rows="2" placeholder="Type your message here..." class="textarea textarea-bordered w-full border-4 border-black shadow-md resize-none" required></textarea>
+        {% if form.body.errors %}
+          <div class="text-red-600 font-bold text-xs mt-1">{{ form.body.errors }}</div>
+        {% endif %}
+        <!-- Comic label -->
+        <div class="absolute -top-3 left-4">
+          <div class="badge border-3 border-black bg-yellow-400 text-black font-black shadow-lg px-2 py-0.5 text-xs transform rotate-[-2deg]">
+            TYPE HERE
+          </div>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg md:btn-xl border-4 border-black bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-2xl font-black transform hover:scale-110 hover:rotate-2 transition-transform px-6 md:px-8 h-full">
+        <span class="text-2xl md:text-3xl drop-shadow-[2px_2px_0px_rgba(0,0,0,0.3)]">🚀</span>
+      </button>
+    </form>
+    <div class="mt-3 text-center relative z-10">
+      <div class="badge border-3 border-black bg-blue-200 text-blue-900 font-black shadow-lg px-3 py-1 text-xs inline-block transform rotate-1">
+        💡 TIP: Abusive language is automatically filtered
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  
+  @keyframes badge-pop {
+    0%, 100% { transform: rotate(-2deg) scale(1); }
+    50% { transform: rotate(2deg) scale(1.05); }
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  
+  /* Comic badge hover effect */
+  .badge:hover {
+    animation: badge-pop 0.3s ease-in-out;
+  }
+  
+  /* Custom scrollbar for chat - Comic style */
+  #chat-messages::-webkit-scrollbar {
+    width: 14px;
+  }
+  
+  #chat-messages::-webkit-scrollbar-track {
+    background: linear-gradient(to bottom, #fef3c7, #fde68a);
+    border: 3px solid black;
+    border-radius: 10px;
+  }
+  
+  #chat-messages::-webkit-scrollbar-thumb {
+    background: linear-gradient(to bottom, #9333ea, #ec4899);
+    border: 3px solid black;
+    border-radius: 10px;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+  }
+  
+  #chat-messages::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(to bottom, #7c3aed, #db2777);
+    transform: scale(1.1);
+  }
+  
+  /* Comic speech bubble effect */
+  .comic-bubble {
+    position: relative;
+    filter: drop-shadow(4px 4px 0px rgba(0,0,0,0.3));
+  }
+  
+  /* Retro comic text shadow */
+  .comic-text {
+    text-shadow: 2px 2px 0px rgba(0,0,0,0.2), 
+                 4px 4px 0px rgba(0,0,0,0.1);
+  }
+</style>
+
+<script>
+  // Debug: Log HTMX WS events
+  document.body.addEventListener('htmx:wsConnecting', function(evt) {
+    console.log('HTMX WS: Connecting...', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsOpen', function(evt) {
+    console.log('HTMX WS: Connected!', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsClose', function(evt) {
+    console.log('HTMX WS: Closed', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsError', function(evt) {
+    console.error('HTMX WS: Error', evt.detail);
+  });
+
+  document.body.addEventListener('htmx:wsConfigSend', function(evt) {
+    console.log('HTMX WS: Config send', evt.detail);
+    // Log what will be sent
+    console.log('Message body:', evt.detail.messageBody);
+    console.log('Parameters:', evt.detail.parameters);
+  });
+
+  document.body.addEventListener('htmx:wsBeforeSend', function(evt) {
+    console.log('HTMX WS: Before send', evt.detail);
+    console.log('Message being sent:', evt.detail.message);
+  });
+
+  document.body.addEventListener('htmx:wsAfterSend', function(evt) {
+    console.log('HTMX WS: After send', evt.detail);
+    // Clear form after sending message
+    const form = document.getElementById('chat-form');
+    if (form) {
+      const textarea = form.querySelector('textarea[name="body"]');
+      if (textarea) {
+        textarea.value = '';
+        textarea.focus();
+      }
+    }
+  });
+
+  document.body.addEventListener('htmx:wsBeforeMessage', function(evt) {
+    console.log('HTMX WS: Before message', evt.detail);
+  });
+
+  // Auto-scroll to bottom when new messages arrive
+  document.body.addEventListener('htmx:wsAfterMessage', function(evt) {
+    console.log('HTMX WS: After message', evt.detail);
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+      setTimeout(() => {
+        chatMessages.scrollTo({
+          top: chatMessages.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 100);
+    }
+  });
+
+  // Focus textarea on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    const textarea = document.querySelector('textarea[name="body"]');
+    if (textarea) {
+      textarea.focus();
+    }
+    
+    // Scroll to bottom on initial load
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+      chatMessages.scrollTo({
+        top: chatMessages.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+
+    // Check if HTMX WS is loaded
+    if (typeof htmx !== 'undefined' && htmx.extension) {
+      console.log('HTMX WS extension loaded');
+    } else {
+      console.error('HTMX WS extension not loaded!');
+    }
+  });
+</script>
+{% endblock %}

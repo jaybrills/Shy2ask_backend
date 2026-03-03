@@ -1,0 +1,21 @@
+[Unit]
+Description=Shy2Ask Celery Worker
+After=network.target redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=azureuser
+Group=www-data
+WorkingDirectory=/home/azureuser/shy2ask_backend
+EnvironmentFile=/home/azureuser/shy2ask_backend/.env
+ExecStart=/home/azureuser/shy2ask_backend/venv/bin/celery \
+    -A shy2ask worker \
+    --loglevel=info \
+    --concurrency=2 \
+    --logfile=/home/azureuser/shy2ask_backend/logs/celery-worker.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

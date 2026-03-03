@@ -1,0 +1,45 @@
+{% extends "core/base.html" %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+  <h1 class="text-3xl font-bold">Features</h1>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Anonymous messaging</h2>
+        <p>Send and receive without revealing identity. Replies stay anonymous.</p>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Bad word censor</h2>
+        <p>We auto-censor abusive and sensitive terms; extreme content is blocked.</p>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Deal workflow</h2>
+        <p>Capture deal amounts, auto-calc 3% fee, and produce invoice numbers.</p>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Tracking IDs</h2>
+        <p>Every request gets a tracking code for quick status lookup.</p>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Email relay</h2>
+        <p>We notify both sides when requests, replies, and deals move forward.</p>
+      </div>
+    </div>
+    <div class="card bg-base-100 shadow">
+      <div class="card-body">
+        <h2 class="card-title">Premium options</h2>
+        <p>Priority delivery, unlimited messaging, and verified anonymous badges.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

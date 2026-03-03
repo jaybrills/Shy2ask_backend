@@ -1,0 +1,14 @@
+[Unit]
+Description=Shy2Ask Daphne Service
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+Group=www-data
+WorkingDirectory=/home/azureuser/shy2ask_backend
+ExecStart=/home/azureuser/shy2ask_backend/venv/bin/daphne -b 0.0.0.0 -p 8001 shy2ask.asgi:application
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

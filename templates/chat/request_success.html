@@ -1,0 +1,13 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+<section class="card success-card">
+    <h1>We got your request</h1>
+    <p>Thanks for trusting Shy2Ask. We will reach out to the recipient and update you with their answer.</p>
+    <div class="cta-group">
+        <a class="btn primary" href="{% url 'core:home' %}">Back to home</a>
+        <a class="btn ghost" href="{% url 'core:request_create' %}">Submit another</a>
+    </div>
+</section>
+{% endblock %}
+

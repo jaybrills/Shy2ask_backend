@@ -1,0 +1,254 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="w-full bg-gradient-to-br from-yellow-50 via-purple-50 to-blue-50 min-h-screen py-8">
+  <div class="w-full px-4 md:px-8">
+    <div class="max-w-6xl mx-auto">
+      
+      <!-- Header Card -->
+      <div class="card bg-white border-4 border-black shadow-2xl mb-8 transform hover:scale-[1.02] transition-transform">
+        <div class="card-body p-6 md:p-8 text-center">
+          <div class="text-6xl mb-4">📝</div>
+          <h1 class="text-4xl md:text-5xl font-black mb-4" style="font-family: 'Fredoka One', cursive;">
+            Create a Shy Request
+          </h1>
+          <p class="text-xl font-semibold text-gray-700">
+            We keep you anonymous while we ask on your behalf. Service available in Switzerland only.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-6">
+        
+        <!-- Main Form - Cartoon Style -->
+        <div class="lg:col-span-2">
+          <form method="post" enctype="multipart/form-data" class="card bg-white border-4 border-black shadow-2xl">
+            <div class="card-body p-6 md:p-8 space-y-6">
+              {% csrf_token %}
+              
+              <!-- Your Information Section -->
+              <div class="bg-gradient-to-r from-yellow-100 to-orange-100 border-4 border-black rounded-2xl p-6">
+                <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" style="font-family: 'Fredoka One', cursive;">
+                  👤 Your Information
+                </h2>
+                <div class="space-y-4">
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.requester_name.label }}</span>
+                    </label>
+                    {{ form.requester_name }}
+                    {% if form.requester_name.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.requester_name.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.requester_email.label }}</span>
+                    </label>
+                    {{ form.requester_email }}
+                    {% if form.requester_email.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.requester_email.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.requester_phone.label }} <span class="text-sm font-normal">(optional)</span></span>
+                    </label>
+                    {{ form.requester_phone }}
+                    {% if form.requester_phone.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.requester_phone.errors }}</div>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Target Information Section -->
+              <div class="bg-gradient-to-r from-blue-100 to-purple-100 border-4 border-black rounded-2xl p-6">
+                <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" style="font-family: 'Fredoka One', cursive;">
+                  🎯 Who Should We Contact?
+                </h2>
+                <div class="space-y-4">
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.target_name.label }} <span class="text-sm font-normal">(optional)</span></span>
+                    </label>
+                    {{ form.target_name }}
+                    {% if form.target_name.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.target_name.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.target_email.label }} <span class="text-sm font-normal">(at least one contact method required)</span></span>
+                    </label>
+                    {{ form.target_email }}
+                    {% if form.target_email.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.target_email.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.target_phone.label }} <span class="text-sm font-normal">(optional)</span></span>
+                    </label>
+                    {{ form.target_phone }}
+                    {% if form.target_phone.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.target_phone.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.target_address.label }} <span class="text-sm font-normal">(optional, for letters)</span></span>
+                    </label>
+                    {{ form.target_address }}
+                    {% if form.target_address.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.target_address.errors }}</div>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Request Details Section -->
+              <div class="bg-gradient-to-r from-green-100 to-teal-100 border-4 border-black rounded-2xl p-6">
+                <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" style="font-family: 'Fredoka One', cursive;">
+                  💬 Your Shy Question
+                </h2>
+                <div class="space-y-4">
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.description.label }}</span>
+                    </label>
+                    {{ form.description }}
+                    {% if form.description.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.description.errors }}</div>
+                    {% endif %}
+                    <label class="label">
+                      <span class="label-text text-sm font-semibold text-gray-600">Tell us what you want us to ask them (anonymously)</span>
+                    </label>
+                  </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.service_channel.label }}</span>
+                    </label>
+                    {{ form.service_channel }}
+                    {% if form.service_channel.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.service_channel.errors }}</div>
+                    {% endif %}
+                  </div>
+                  <div id="call-minutes-field" class="form-control hidden">
+                    <label class="label">
+                      <span class="label-text font-bold text-lg">{{ form.call_minutes.label }}</span>
+                    </label>
+                    {{ form.call_minutes }}
+                    {% if form.call_minutes.errors %}
+                      <div class="text-red-600 font-bold text-sm mt-1">{{ form.call_minutes.errors }}</div>
+                    {% endif %}
+                    <label class="label">
+                      <span class="label-text text-sm font-semibold text-gray-600">Estimated minutes for the call</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Attachments Section -->
+              <div class="bg-gradient-to-r from-pink-100 to-red-100 border-4 border-black rounded-2xl p-6">
+                <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" style="font-family: 'Fredoka One', cursive;">
+                  📎 Attachments (Optional)
+                </h2>
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text font-bold text-lg">Add images, videos, or documents</span>
+                  </label>
+                  <input type="file" name="attachments" multiple class="file-input file-input-bordered border-4 border-black rounded-xl p-3 text-lg font-semibold w-full bg-white shadow-lg">
+                  {% if form.attachments.help_text %}
+                    <label class="label">
+                      <span class="label-text text-sm font-semibold text-gray-600">{{ form.attachments.help_text }}</span>
+                    </label>
+                  {% endif %}
+                </div>
+              </div>
+
+              <!-- Submit Button -->
+              <button type="submit" class="btn btn-primary btn-lg border-4 border-black shadow-2xl font-black transform hover:scale-110 transition-transform w-full text-xl">
+                🚀 Submit Shy Request
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Sidebar Info Card -->
+        <div class="lg:col-span-1">
+          <div class="card bg-gradient-to-br from-purple-200 to-pink-200 border-4 border-black shadow-2xl sticky top-8">
+            <div class="card-body p-6">
+              <h3 class="card-title text-2xl font-black mb-4 border-b-4 border-black pb-2" style="font-family: 'Fredoka One', cursive;">
+                💰 Pricing (CHF)
+              </h3>
+              <div class="space-y-3 mb-6">
+                <div class="bg-white border-2 border-black rounded-xl p-4">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-2xl">📧</span>
+                    <span class="font-black text-lg">Email</span>
+                  </div>
+                  <p class="text-2xl font-black text-green-600">CHF 1</p>
+                </div>
+                <div class="bg-white border-2 border-black rounded-xl p-4">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-2xl">📮</span>
+                    <span class="font-black text-lg">Letter</span>
+                  </div>
+                  <p class="text-2xl font-black text-green-600">CHF 10</p>
+                </div>
+                <div class="bg-white border-2 border-black rounded-xl p-4">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-2xl">📞</span>
+                    <span class="font-black text-lg">Phone Call</span>
+                  </div>
+                  <p class="text-2xl font-black text-green-600">CHF 20</p>
+                  <p class="text-sm font-bold text-gray-600">+ CHF 1 per minute</p>
+                </div>
+              </div>
+              
+              <div class="bg-yellow-200 border-4 border-yellow-600 rounded-xl p-4 mb-6">
+                <h4 class="font-black text-lg mb-2">💡 What to include:</h4>
+                <ul class="space-y-2 text-sm font-semibold">
+                  <li>✅ Who we should contact</li>
+                  <li>✅ What we should ask</li>
+                  <li>✅ Supporting attachments</li>
+                </ul>
+              </div>
+              
+              <div class="bg-red-200 border-4 border-red-600 rounded-xl p-4">
+                <p class="text-sm font-black text-red-900">
+                  🛡️ We reject violent or unlawful requests.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Show/hide call minutes field based on service channel
+  document.addEventListener('DOMContentLoaded', function() {
+    const channelSelect = document.querySelector('select[name="service_channel"]');
+    const callMinutesField = document.getElementById('call-minutes-field');
+    
+    if (channelSelect && callMinutesField) {
+      function toggleCallMinutes() {
+        if (channelSelect.value === 'call') {
+          callMinutesField.classList.remove('hidden');
+        } else {
+          callMinutesField.classList.add('hidden');
+        }
+      }
+      
+      channelSelect.addEventListener('change', toggleCallMinutes);
+      toggleCallMinutes(); // Initial check
+    }
+  });
+</script>
+{% endblock %}
+

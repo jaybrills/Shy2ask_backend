@@ -1,0 +1,21 @@
+[Unit]
+Description=Shy2Ask Celery Beat Scheduler
+After=network.target redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=azureuser
+Group=www-data
+WorkingDirectory=/home/azureuser/shy2ask_backend
+EnvironmentFile=/home/azureuser/shy2ask_backend/.env
+ExecStart=/home/azureuser/shy2ask_backend/venv/bin/celery \
+    -A shy2ask beat \
+    --loglevel=info \
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler \
+    --logfile=/home/azureuser/shy2ask_backend/logs/celery-beat.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

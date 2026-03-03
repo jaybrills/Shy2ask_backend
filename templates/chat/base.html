@@ -1,0 +1,143 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- Primary SEO Tags -->
+    <title>Shy2Ask | Anonymous Message Relay Switzerland (Zurich, Basel, Geneva)</title>
+    <meta name="title" content="Shy2Ask | Anonymous Message Relay Switzerland (Zurich, Basel, Geneva)">
+    <meta name="description" content="Too shy to ask? Shy2Ask relays your sensitive questions anonymously via email, letter, or phone in Switzerland. Secure, professional, and 100% confidential in Zurich, Basel, and Bern.">
+    <meta name="keywords" content="anonymous message, shy to ask, Switzerland relay service, Zurich anonymity, Basel confidential messaging, private inquiry Switzerland, anonymous reach out Geneva, anonymous escrow Switzerland">
+    <meta name="author" content="Shy2Ask">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://shy2ask.com/">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://shy2ask.com/">
+    <meta property="og:title" content="Shy2Ask | Speak Your Mind Anonymously in Switzerland">
+    <meta property="og:description" content="We relay your sensitive questions via email, letter, or phone—keeping you 100% anonymous. Serving Zurich, Basel, Geneva, and all of Switzerland.">
+    <meta property="og:image" content="{% static 'core/img/slider1.jpg' %}">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://shy2ask.com/">
+    <meta property="twitter:title" content="Shy2Ask | Speak Your Mind Anonymously in Switzerland">
+    <meta property="twitter:description" content="Bridge the silence. We relay your sensitive questions via email, letter, or phone—keeping you 100% anonymous.">
+    <meta property="twitter:image" content="{% static 'core/img/slider1.jpg' %}">
+
+    <!-- Geo Tags for Switzerland -->
+    <meta name="geo.region" content="CH-ZH" />
+    <meta name="geo.placename" content="Zurich" />
+    <meta name="geo.position" content="47.3769;8.5417" />
+    <meta name="ICBM" content="47.3769, 8.5417" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Service",
+      "name": "Shy2Ask Anonymous Relay",
+      "description": "Professional and anonymous message relay service in Switzerland.",
+      "provider": {
+        "@type": "Organization",
+        "name": "Shy2Ask",
+        "url": "https://shy2ask.com"
+      },
+      "areaServed": [
+        {
+          "@type": "City",
+          "name": "Zurich"
+        },
+        {
+          "@type": "City",
+          "name": "Basel"
+        },
+        {
+          "@type": "City",
+          "name": "Geneva"
+        },
+        {
+          "@type": "Country",
+          "name": "Switzerland"
+        }
+      ],
+      "serviceType": "Anonymous Communication Service"
+    }
+    </script>
+
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css" referrerpolicy="no-referrer" />
+    <link rel="icon" type="image/x-icon" href="{% static 'core/img/favicon.ico' %}">
+    <!-- HTMX and HTMX WebSocket Extension -->
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/htmx-ext-ws@2.0.4"></script>
+    <link rel="stylesheet" href="{% static 'core/styles.css' %}">
+</head>
+<body class="comic-bg">
+    <header class="site-header">
+        <div class="logo-bubble">
+            <span class="logo-text">Shy2Ask</span>
+        </div>
+        <nav class="main-nav">
+            <a href="{% url 'account:home' %}">Home</a>
+            <a href="#">Create request</a>
+            <a href="#">Pricing</a>
+            <a href="#">Features</a>
+            <a href="#">Track</a>
+            <a href="/docs">API Docs</a>
+            {% if user.is_authenticated %}
+                <a href="#">Dashboard</a>
+                <a href="#">Logout</a>
+            {% else %}
+                <a href="#">Login</a>
+                <a class="btn btn-primary btn-sm" href="#">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="message {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <main class="w-full">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="site-footer">
+        <p>We relay your shy questions with care. No violent or unlawful requests.</p>
+        <p class="small-text">Only available in Switzerland. Contact support@shy2ask.com for help.</p>
+    </footer>
+    <script>
+      (function () {
+        function initHeroSlider() {
+          var container = document.querySelector('[data-hero-slider]');
+          if (!container) return;
+          var slides = Array.prototype.slice.call(
+            container.querySelectorAll('[data-hero-slide]')
+          );
+          if (slides.length <= 1) return;
+          var index = 0;
+          setInterval(function () {
+            slides[index].classList.add('hidden');
+            index = (index + 1) % slides.length;
+            slides[index].classList.remove('hidden');
+          }, 3500);
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', initHeroSlider);
+        } else {
+          initHeroSlider();
+        }
+      })();
+    </script>
+</body>
+</html>

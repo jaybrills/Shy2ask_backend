@@ -1,0 +1,58 @@
+{% load static %}
+<div class="flex {% if is_requester %}justify-end{% else %}justify-start{% endif %} animate-fade-in" id="message-{{ message_id }}" hx-swap-oob="beforeend:#chat-messages">
+  <div class="max-w-[85%] md:max-w-[70%] flex gap-3 {% if is_requester %}flex-row-reverse{% endif %}">
+    
+    <!-- Avatar -->
+    <div class="flex-shrink-0">
+      <div class="w-12 h-12 md:w-14 md:h-14 rounded-full border-4 border-black flex items-center justify-center text-2xl md:text-3xl font-black shadow-2xl transform hover:scale-110 transition-transform {% if is_requester %}bg-yellow-400{% else %}bg-blue-400{% endif %}">
+        {% if is_requester %}👤{% else %}🏢{% endif %}
+      </div>
+    </div>
+    
+    <!-- Message Bubble - 70s-80s Comic Style -->
+    <div class="flex flex-col {% if is_requester %}items-end{% else %}items-start{% endif %}">
+      <!-- Comic Badge for Sender Name & Time -->
+      <div class="flex items-center gap-2 mb-2">
+        <div class="badge border-4 border-black {% if is_requester %}bg-yellow-400{% else %}bg-blue-400{% endif %} text-black font-black shadow-xl px-3 py-1 transform {% if is_requester %}rotate-2{% else %}rotate-[-2deg]{% endif %} hover:scale-110 transition-transform">
+          <span class="text-xs md:text-sm">
+            {% if display_name %}👤 {{ display_name }}{% elif is_requester %}👤 YOU{% else %}🏢 SHY2ASK{% endif %}
+          </span>
+        </div>
+        <div class="badge border-3 border-black bg-white text-gray-700 font-black shadow-lg px-2 py-1 text-xs transform rotate-1">
+          {{ created_at_display }}
+        </div>
+      </div>
+      
+      {% if is_blocked %}
+        <!-- Blocked Message - Comic Warning Style -->
+        <div class="bg-red-200 border-4 border-red-600 rounded-2xl {% if is_requester %}rounded-tr-none{% else %}rounded-tl-none{% endif %} p-4 md:p-5 shadow-2xl transform hover:scale-[1.02] transition-transform relative overflow-hidden">
+          <!-- Comic pattern -->
+          <div class="absolute inset-0 opacity-20" style="background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(0,0,0,0.1) 5px, rgba(0,0,0,0.1) 10px);"></div>
+          <div class="relative z-10">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-3xl">🚫</span>
+              <div class="badge border-4 border-red-800 bg-red-400 text-red-900 font-black shadow-xl px-3 py-1 transform rotate-[-3deg]">
+                BLOCKED!
+              </div>
+            </div>
+            <p class="font-black text-red-900 text-sm md:text-base">
+              This message contained abusive or harmful content and was automatically blocked.
+            </p>
+          </div>
+        </div>
+      {% else %}
+        <!-- Normal Message Bubble - Comic Speech Bubble Style -->
+        <div class="{% if is_requester %}bg-yellow-300 border-4 border-yellow-600 rounded-2xl rounded-tr-none{% else %}bg-blue-300 border-4 border-blue-600 rounded-2xl rounded-tl-none{% endif %} p-4 md:p-5 shadow-2xl transform hover:scale-[1.02] transition-transform relative overflow-hidden" style="position: relative;">
+          <!-- Comic dots pattern overlay -->
+          <div class="absolute inset-0 opacity-10" style="background-image: radial-gradient(circle, rgba(0,0,0,0.3) 1px, transparent 1px); background-size: 8px 8px;"></div>
+          <!-- Speech bubble tail -->
+          <div class="absolute {% if is_requester %}right-[-8px] bottom-4{% else %}left-[-8px] bottom-4{% endif %} w-6 h-6 {% if is_requester %}bg-yellow-300 border-4 border-yellow-600{% else %}bg-blue-300 border-4 border-blue-600{% endif %} border-t-0 border-l-0 rotate-45 transform"></div>
+          <p class="font-black text-gray-900 whitespace-pre-wrap text-sm md:text-base leading-relaxed relative z-10" style="text-shadow: 1px 1px 0px rgba(255,255,255,0.5);">
+            {{ message_body }}
+          </p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
