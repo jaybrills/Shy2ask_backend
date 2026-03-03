@@ -136,9 +136,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000,http://127.0.0.1:8000,http://10.0.2.2:8000"
     ",https://backend.shy2ask.com",
 ]
-SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT")
-SESSION_COOKIE_SECURE = env("SESSION_COOKIE_SECURE")
-CSRF_COOKIE_SECURE = env("CSRF_COOKIE_SECURE")
+# SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT")
+# SESSION_COOKIE_SECURE = env("SESSION_COOKIE_SECURE")
+# CSRF_COOKIE_SECURE = env("CSRF_COOKIE_SECURE")
 
 # CORS_ALLOWED_ORIGINS = [
 #     "http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,"
@@ -158,10 +158,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # "service coming soon".
 ALLOWED_COUNTRY_CODE = "CH"
 COUNTRY_HEADER = "HTTP_X_COUNTRY_CODE"
-
-# Auth redirects (for admin / API; no frontend)
-LOGIN_REDIRECT_URL = "/admin/"
-LOGOUT_REDIRECT_URL = "/admin/"
 
 # Email (from env; SMTP for production)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
