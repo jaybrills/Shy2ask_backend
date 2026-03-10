@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ValidationError
+from .utils import censor_text
 
 
 def generate_tracking_code(length: int = 10) -> str:
@@ -60,6 +62,14 @@ class ShyRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["requester_email", "-created_at"]),
+            models.Index(fields=["status", "-created_at"]),
+        ]
+
     def calculate_price(self) -> Decimal:
         """Apply simple pricing rules from the SRS."""
         if self.service_channel == self.ServiceChannel.EMAIL:
@@ -94,24 +104,14 @@ class Attachment(models.Model):
         return self.file.name
 
 
-class Conversation(models.Model):
-    request = models.OneToOneField(
-        ShyRequest, related_name="conversation", on_delete=models.CASCADE
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Conversation for {self.request}"
-
-
 class Message(models.Model):
     class Sender(models.TextChoices):
         REQUESTER = ("requester", "Requester")
         STAFF = ("staff", "Staff")
         RESPONDER = ("responder", "Responder")  # reply via tracking code (no login)
 
-    conversation = models.ForeignKey(
-        Conversation, related_name="messages", on_delete=models.CASCADE
+    request = models.ForeignKey(
+        ShyRequest, related_name="messages", on_delete=models.CASCADE
     )
     sender = models.CharField(max_length=20, choices=Sender.choices)
     author = models.ForeignKey(
@@ -127,17 +127,27 @@ class Message(models.Model):
     is_blocked = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["request", "created_at"]),
+            models.Index(fields=["sender", "created_at"]),
+            models.Index(fields=["author", "created_at"]),
+        ]
+
     def __str__(self):
         return f"{self.get_sender_display()}: {self.body[:40]}"
 
     def save(self, *args, **kwargs):
-        if not self.clean_body:
-            from .utils import censor_text
-
-            clean_body, blocked = censor_text(self.body)
-            self.clean_body = clean_body
-            self.is_blocked = blocked
+        self.full_clean()
         super().save(*args, **kwargs)
+
+    def clean(self):
+        clean_body, blocked = censor_text(self.body or "")
+        self.clean_body = clean_body
+        self.is_blocked = blocked
+        if blocked:
+            raise ValidationError("Message contains blocked content.")
 
 
 class Notification(models.Model):
@@ -150,6 +160,13 @@ class Notification(models.Model):
     related_request = models.ForeignKey(
         ShyRequest, on_delete=models.CASCADE, null=True, blank=True
     )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["recipient_email", "-created_at"]),
+            models.Index(fields=["related_request", "is_read", "-created_at"]),
+        ]
 
     def save(self, *args, **kwargs):
         if not self.created_at:

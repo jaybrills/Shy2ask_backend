@@ -129,15 +129,15 @@ def run_deal_detection_and_notify(request_id: int):
     and send engaging notification to deal_alerts subscribers. Call from consumer after new message.
     """
     from django.db import transaction
-    from .models import Conversation, Deal, ShyRequest
+    from .models import Deal, Message, ShyRequest
 
     try:
         request = ShyRequest.objects.get(pk=request_id)
-        conv, _ = Conversation.objects.get_or_create(request=request)
     except ShyRequest.DoesNotExist:
         return
     text = " ".join(
-        (m.clean_body or m.body) for m in conv.messages.order_by("created_at")
+        (m.clean_body or m.body)
+        for m in Message.objects.filter(request=request).order_by("created_at")
     ).strip()
     if not text:
         return

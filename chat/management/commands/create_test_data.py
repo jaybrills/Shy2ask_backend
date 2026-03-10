@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
-from core.models import ShyRequest, Conversation, Message, Deal, Attachment
+from chat.models import ShyRequest, Message, Deal, Attachment
 from decimal import Decimal
 from datetime import datetime, timedelta
 
@@ -119,7 +119,7 @@ class Command(BaseCommand):
                 created_requests.append(request_obj)
                 self.stdout.write(self.style.WARNING(f'Request already exists: {request_obj.tracking_code}'))
 
-        # Create comprehensive conversations and messages
+        # Create comprehensive request messages
         messages_data = [
             {
                 'request_index': 0,
@@ -265,12 +265,10 @@ class Command(BaseCommand):
 
         for msg_group in messages_data:
             request_obj = created_requests[msg_group['request_index']]
-            conversation, _ = Conversation.objects.get_or_create(request=request_obj)
-            
             for msg_data in msg_group['messages']:
                 created_at = datetime.now() + timedelta(days=msg_data['created_at_offset'])
                 message, created = Message.objects.get_or_create(
-                    conversation=conversation,
+                    request=request_obj,
                     sender=msg_data['sender'],
                     body=msg_data['body'],
                     defaults={
@@ -324,4 +322,3 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('\n✅ Test data created successfully!'))
         self.stdout.write(self.style.SUCCESS(f'Login with: username=khajan, password=test123'))
         self.stdout.write(self.style.SUCCESS(f'Email: mailtokhajan@gmail.com'))
-

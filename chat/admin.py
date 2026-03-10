@@ -5,7 +5,6 @@ from .models import (
     CensorCategory,
     CensorLog,
     CensorTrainingExample,
-    Conversation,
     Deal,
     Message,
     Notification,
@@ -48,14 +47,9 @@ class AttachmentAdmin(admin.ModelAdmin):
     search_fields = ("file",)
 
 
-@admin.register(Conversation)
-class ConversationAdmin(admin.ModelAdmin):
-    list_display = ("request", "created_at")
-
-
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ("conversation", "sender", "is_blocked", "created_at")
+    list_display = ("request", "sender", "is_blocked", "created_at")
     list_filter = ("sender", "is_blocked")
     search_fields = ("body", "clean_body")
 

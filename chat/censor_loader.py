@@ -145,7 +145,7 @@ def _openai_text_check(text: str) -> Tuple[bool, float]:
         r = client.moderations.create(**kwargs)
         res = r.results[0]
         flagged = res.flagged
-        scores = getattr(res, "category_scores", None) or {}
+        scores = _category_scores_to_dict(getattr(res, "category_scores", None))
         score = max((float(v) for v in scores.values()), default=0.0)
         return (flagged or (score >= threshold)), score
     except Exception as e:
@@ -156,13 +156,106 @@ def _openai_text_check(text: str) -> Tuple[bool, float]:
                 r = client.moderations.create(input=text[:20480])
                 res = r.results[0]
                 flagged = res.flagged
-                scores = getattr(res, "category_scores", None) or {}
+                scores = _category_scores_to_dict(getattr(res, "category_scores", None))
                 score = max((float(v) for v in scores.values()), default=0.0)
                 return (flagged or (score >= threshold)), score
             except Exception:
                 pass
         logger.warning("OpenAI Moderation check failed: %s", e)
         return False, 0.0
+
+
+def _category_scores_to_dict(scores_obj) -> dict:
+    """Normalize OpenAI category_scores object to plain dict for robust parsing."""
+    if not scores_obj:
+        return {}
+    if isinstance(scores_obj, dict):
+        return scores_obj
+    try:
+        dump = scores_obj.model_dump()
+        if isinstance(dump, dict):
+            return dump
+    except Exception:
+        pass
+    try:
+        d = dict(scores_obj)
+        if isinstance(d, dict):
+            return d
+    except Exception:
+        pass
+    out = {}
+    for name in dir(scores_obj):
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(scores_obj, name)
+        except Exception:
+            continue
+        if callable(value):
+            continue
+        if isinstance(value, (int, float, bool)):
+            out[name] = float(value)
+    return out
+
+
+def ai_illegal_intent_check(text: str) -> tuple[bool, float, list[str]]:
+    """
+    OpenAI classifier for illegal-intent talk not always covered by toxicity moderation.
+    Returns (blocked, score, categories).
+    """
+    if not text or not text.strip():
+        return False, 0.0, []
+    api_key = getattr(settings, "OPENAI_API_KEY", None)
+    if not api_key:
+        return False, 0.0, []
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            "Classify whether the message is requesting, planning, offering, selling, buying, or facilitating illegal activity. "
+            "Focus on drugs, weapons/arms, human trafficking, sexual exploitation (especially minors), fraud/scams, "
+            "money laundering, extortion/blackmail, violent crime, terrorism, kidnapping, counterfeit documents. "
+            "Return ONLY JSON: "
+            "{\"blocked\": true|false, \"score\": 0..1, \"categories\": ["
+            "\"drugs\",\"weapons\",\"human_trafficking\",\"sexual_exploitation\",\"fraud_scam\","
+            "\"money_laundering\",\"extortion\",\"violent_crime\",\"terrorism\",\"kidnapping\",\"counterfeit\","
+            "\"illegal_other\"]}"
+        )
+        r = client.chat.completions.create(
+            model=getattr(settings, "CENSOR_OPENAI_POLICY_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": "You are a strict safety classifier. Output valid JSON only."},
+                {"role": "user", "content": f"{prompt}\n\nMESSAGE:\n{text[:8000]}"},
+            ],
+            temperature=0,
+            max_tokens=220,
+        )
+        raw = (r.choices[0].message.content or "").strip()
+        start = raw.find("{")
+        if start == -1:
+            return False, 0.0, []
+        depth, end = 0, start
+        for i, c in enumerate(raw[start:], start):
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        data = json.loads(raw[start : end + 1])
+        blocked = bool(data.get("blocked"))
+        score = float(data.get("score", 0.0))
+        categories = data.get("categories") or []
+        if not isinstance(categories, list):
+            categories = []
+        categories = [str(x).strip() for x in categories if str(x).strip()]
+        threshold = float(getattr(settings, "CENSOR_AI_THRESHOLD", 0.5))
+        return blocked or score >= threshold, score, categories
+    except Exception as e:
+        logger.warning("OpenAI illegal intent check failed: %s", e)
+        return False, 0.0, []
 
 
 def _openai_image_check(image_bytes: bytes, content_type: Optional[str] = None) -> Tuple[bool, float]:

@@ -241,7 +241,8 @@ Requires **Bearer token:** `Authorization: Bearer <token>`
 
 ### 1.3 Censor (`/censor`)
 
-No auth required. **Multilingual:** OpenAI Moderation supports 40+ languages; Google Perspective (fallback) supports a wide language list. Uses rule-based lists + AI (OpenAI Moderation/Vision when `OPENAI_API_KEY` is set). Evasive spelling (e.g. `d.r.u.g.s`, `buy.your.girl`) is normalized and matched.
+No auth required. **Multilingual:** OpenAI Moderation supports 40+ languages.
+`/censor/text` is configured as **OpenAI policy-first** (strict illegal-intent blocking: drugs, weapons, trafficking, sexual exploitation, fraud, extortion, violence, etc.). If OpenAI key is missing, endpoint fails closed (`blocked: true`).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -260,16 +261,16 @@ No auth required. **Multilingual:** OpenAI Moderation supports 40+ languages; Go
 **Response:** `200 OK`
 ```json
 {
-  "censored_text": "Your m***** to check...",
+  "censored_text": "[BLOCKED]",
   "blocked": true,
   "detected": [
     {
-      "term": "drugs",
+      "term": "[AI policy]",
       "category": "drugs"
     }
   ],
   "categories": ["drugs"],
-  "ai_toxic_score": 0.85,
+  "ai_toxic_score": 0.97,
   "ai_provider": "openai"
 }
 ```
@@ -310,6 +311,21 @@ No auth required. **Multilingual:** OpenAI Moderation supports 40+ languages; Go
 
 ---
 
+### 1.4 Requests (`/requests`) - Swagger (`/docs`)
+
+These request endpoints are visible in Swagger UI and support responder flows via tracking code.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/requests/` | Bearer | Create request |
+| GET | `/requests/` | Bearer | List my requests |
+| GET | `/requests/{request_id}/conversation` | Bearer or `?tracking_code=` | Get conversation |
+| POST | `/requests/{request_id}/messages` | Bearer or `tracking_code` in body | Send message |
+| POST | `/requests/reply-by-tracking` | No | Reply using only tracking code |
+| GET | `/requests/by-tracking/{tracking_code}/conversation` | No | Get conversation by tracking code |
+
+---
+
 ## 2. DRF API (`/api/`)
 
 REST framework under `/api/`. No auth required for create/list by default; filtering by user when authenticated.
@@ -321,8 +337,10 @@ REST framework under `/api/`. No auth required for create/list by default; filte
 | GET | `/api/requests/` | List requests (authenticated: own; or filter by `?tracking_code=XXX`) |
 | POST | `/api/requests/` | Create a new request |
 | GET | `/api/requests/{id}/` | Retrieve one request |
-| POST | `/api/requests/{id}/messages/` | Send a message in this request’s conversation |
-| GET | `/api/requests/{id}/conversation/` | Get all messages in this request’s conversation |
+| POST | `/api/requests/{id}/messages/` | Send message (owner token or `tracking_code`) |
+| GET | `/api/requests/{id}/conversation/` | Get conversation (owner token or `tracking_code`) |
+| POST | `/api/requests/reply/` | Reply by `tracking_code` (no login required) |
+| GET | `/api/requests/conversation/by-tracking/{tracking_code}/` | Get conversation by tracking code |
 
 #### GET `/api/requests/`
 
@@ -395,14 +413,18 @@ REST framework under `/api/`. No auth required for create/list by default; filte
 ```
 Message is censored; `clean_body` and `is_blocked` are set by the backend.
 
-**Request body (JSON):** `body` (required), optional `alias` (display name for this message).
+**Request body (JSON):** `body` (required), optional `alias`, optional `tracking_code`.
 ```json
 {
   "body": "Message text...",
-  "alias": "MyNick"
+  "alias": "MyNick",
+  "tracking_code": "ABC12XYZ"
 }
 ```
-If `alias` is omitted, the requester’s profile `alias_name` or the request’s `requester_alias` is used.
+Access rules:
+- Request owner can send as `requester` using Bearer token.
+- Responder can send as `responder` using matching `tracking_code`.
+If `alias` is omitted, the request/profile default display name is used.
 
 **Response:** `201 Created` – message object:
 ```json
@@ -423,6 +445,46 @@ If `alias` is omitted, the requester’s profile `alias_name` or the request’s
 #### GET `/api/requests/{id}/conversation/`
 
 **Response:** `200 OK` – array of message objects (same shape as above, with `display_name`).
+
+`tracking_code` can be passed as query param for responder access:
+`/api/requests/{id}/conversation/?tracking_code=ABC12XYZ`
+
+---
+
+#### POST `/api/requests/reply/`
+
+**Request body (JSON):**
+```json
+{
+  "tracking_code": "ABC12XYZ",
+  "body": "Here is my reply",
+  "alias": "ResponderNick"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "request_id": 1,
+  "tracking_code": "ABC12XYZ",
+  "message": {
+    "id": 5,
+    "sender": "responder",
+    "sender_display_name": "ResponderNick",
+    "display_name": "ResponderNick",
+    "body": "Here is my reply",
+    "clean_body": "Here is my reply",
+    "is_blocked": false,
+    "created_at": "2026-03-10T10:00:00Z"
+  }
+}
+```
+
+---
+
+#### GET `/api/requests/conversation/by-tracking/{tracking_code}/`
+
+Returns the full conversation using tracking code only (same message object shape).
 
 ---
 

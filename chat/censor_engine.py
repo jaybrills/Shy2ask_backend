@@ -353,6 +353,7 @@ def censor_text_full(
     self_harm_phrases: Optional[list[str]] = None,
     use_db_terms: bool = True,
     use_ai_censor: bool = True,
+    use_builtin_rules: bool = True,
     log_source: str = "",
 ) -> CensorResult:
     """
@@ -392,96 +393,97 @@ def censor_text_full(
         except Exception:
             pass
 
-    blocked_phrases = blocked_phrases or BLOCKED_PHRASES
-    exploitation_phrases = exploitation_phrases or EXPLOITATION_PHRASES
-    weapon_words = weapon_words or WEAPON_WORDS
-    drug_words = drug_words or DRUG_WORDS
-    abusive_words = abusive_words or ABUSIVE_WORDS
-    blocked_illegal = blocked_illegal or BLOCKED_ILLEGAL
-    prohibited_products = prohibited_products or PROHIBITED_PRODUCTS
-    demands = demands or DEMANDS
-    scam_phrases = scam_phrases or SCAM_PHRASES
-    violence_phrases = violence_phrases or VIOLENCE_PHRASES
-    self_harm_phrases = self_harm_phrases or SELF_HARM_PHRASES
+    if use_builtin_rules:
+        blocked_phrases = blocked_phrases or BLOCKED_PHRASES
+        exploitation_phrases = exploitation_phrases or EXPLOITATION_PHRASES
+        weapon_words = weapon_words or WEAPON_WORDS
+        drug_words = drug_words or DRUG_WORDS
+        abusive_words = abusive_words or ABUSIVE_WORDS
+        blocked_illegal = blocked_illegal or BLOCKED_ILLEGAL
+        prohibited_products = prohibited_products or PROHIBITED_PRODUCTS
+        demands = demands or DEMANDS
+        scam_phrases = scam_phrases or SCAM_PHRASES
+        violence_phrases = violence_phrases or VIOLENCE_PHRASES
+        self_harm_phrases = self_harm_phrases or SELF_HARM_PHRASES
 
-    # 1. Sexual exploitation first (underage, etc.)
-    c, b, d = _check_phrases(clean, lowered, exploitation_phrases, CATEGORY_SEXUAL_EXPLOITATION, use_normalized=False)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 1. Sexual exploitation first (underage, etc.)
+        c, b, d = _check_phrases(clean, lowered, exploitation_phrases, CATEGORY_SEXUAL_EXPLOITATION, use_normalized=False)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 2. Human trafficking phrases (buy/sell people; evasive forms in list)
-    c, b, d = _check_phrases(clean, lowered, blocked_phrases, CATEGORY_HUMAN_TRADFFICKING, use_normalized=False)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 2. Human trafficking phrases (buy/sell people; evasive forms in list)
+        c, b, d = _check_phrases(clean, lowered, blocked_phrases, CATEGORY_HUMAN_TRADFFICKING, use_normalized=False)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 3. Violence / threats
-    c, b, d = _check_phrases(clean, lowered, violence_phrases, CATEGORY_VIOLENCE)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 3. Violence / threats
+        c, b, d = _check_phrases(clean, lowered, violence_phrases, CATEGORY_VIOLENCE)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 4. Weapon phrases/words (single words: whole-word only)
-    c, b, d = _check_words_and_phrases(clean, lowered, weapon_words, CATEGORY_WEAPONS, block=True)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 4. Weapon phrases/words (single words: whole-word only)
+        c, b, d = _check_words_and_phrases(clean, lowered, weapon_words, CATEGORY_WEAPONS, block=True)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 5. Drug phrases/words (single words: whole-word only, e.g. 'ice' not in 'office')
-    c, b, d = _check_words_and_phrases(clean, lowered, drug_words, CATEGORY_DRUGS, block=True)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 5. Drug phrases/words (single words: whole-word only, e.g. 'ice' not in 'office')
+        c, b, d = _check_words_and_phrases(clean, lowered, drug_words, CATEGORY_DRUGS, block=True)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 6. Scam phrases
-    c, b, d = _check_phrases(clean, lowered, scam_phrases, CATEGORY_SCAM_FRAUD)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 6. Scam phrases
+        c, b, d = _check_phrases(clean, lowered, scam_phrases, CATEGORY_SCAM_FRAUD)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 7. Self-harm (block for safety)
-    c, b, d = _check_phrases(clean, lowered, self_harm_phrases, CATEGORY_SELF_HARM)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 7. Self-harm (block for safety)
+        c, b, d = _check_phrases(clean, lowered, self_harm_phrases, CATEGORY_SELF_HARM)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 8. Demands (extortion etc.)
-    c, b, d = _check_and_mask(clean, lowered, demands, CATEGORY_DEMANDS, block=True)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
-    lowered = clean.lower()
+        # 8. Demands (extortion etc.)
+        c, b, d = _check_and_mask(clean, lowered, demands, CATEGORY_DEMANDS, block=True)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
+        lowered = clean.lower()
 
-    # 9. Abusive words (mask, block on severe)
-    c, b, d = _check_and_mask(clean, lowered, abusive_words, CATEGORY_ABUSIVE, block=False)
-    clean, all_detected = c, all_detected + d
-    for x in d:
-        if x["term"] in BLOCKED_ILLEGAL or x["term"] in ("kill", "murder", "rape", "pedophile", "paedophile"):
-            blocked = True
-    lowered = clean.lower()
+        # 9. Abusive words (mask, block on severe)
+        c, b, d = _check_and_mask(clean, lowered, abusive_words, CATEGORY_ABUSIVE, block=False)
+        clean, all_detected = c, all_detected + d
+        for x in d:
+            if x["term"] in BLOCKED_ILLEGAL or x["term"] in ("kill", "murder", "rape", "pedophile", "paedophile"):
+                blocked = True
+        lowered = clean.lower()
 
-    # 10. Illegal single terms (whole-word; evasive: k.i.l.l, k-i-l-l)
-    for term in blocked_illegal:
-        if " " in term:
-            pat = _evasive_phrase_pattern(term)
-        else:
-            pat = _evasive_word_boundary_pattern(term)
-        if pat.search(clean):
-            all_detected.append({"term": term, "category": CATEGORY_ILLEGAL})
-            blocked = True
-            clean = pat.sub(_mask_phrase(term) if " " in term else _mask_word(term), clean)
-    lowered = clean.lower()
+        # 10. Illegal single terms (whole-word; evasive: k.i.l.l, k-i-l-l)
+        for term in blocked_illegal:
+            if " " in term:
+                pat = _evasive_phrase_pattern(term)
+            else:
+                pat = _evasive_word_boundary_pattern(term)
+            if pat.search(clean):
+                all_detected.append({"term": term, "category": CATEGORY_ILLEGAL})
+                blocked = True
+                clean = pat.sub(_mask_phrase(term) if " " in term else _mask_word(term), clean)
+        lowered = clean.lower()
 
-    # 11. Prohibited products (single words)
-    c, b, d = _check_and_mask(clean, lowered, prohibited_products, CATEGORY_PROHIBITED_PRODUCTS, block=True)
-    clean, blocked = c, blocked or b
-    all_detected.extend(d)
+        # 11. Prohibited products (single words)
+        c, b, d = _check_and_mask(clean, lowered, prohibited_products, CATEGORY_PROHIBITED_PRODUCTS, block=True)
+        clean, blocked = c, blocked or b
+        all_detected.extend(d)
 
     # 12. AI censor (OpenAI / Google – multilingual; always set ai_provider + ai_toxic_score when used)
     if use_ai_censor:
         try:
             from django.conf import settings
-            from .censor_loader import ai_censor_check
+            from .censor_loader import ai_censor_check, ai_illegal_intent_check
             if getattr(settings, "CENSOR_AI_ENABLED", True):
                 is_toxic, score, provider = ai_censor_check(text)
                 if provider and score is not None:
@@ -490,6 +492,15 @@ def censor_text_full(
                 if is_toxic:
                     blocked = True
                     all_detected.append({"term": "[AI detected]", "category": CATEGORY_AI_TOXIC})
+                illegal_blocked, illegal_score, illegal_categories = ai_illegal_intent_check(text)
+                if illegal_score and ((ai_score or 0.0) < illegal_score):
+                    ai_score = illegal_score
+                if illegal_blocked:
+                    blocked = True
+                    for cat in illegal_categories or ["illegal_other"]:
+                        all_detected.append({"term": "[AI policy]", "category": cat})
+                    if not ai_provider:
+                        ai_provider = "openai"
         except Exception:
             pass
 

@@ -1,12 +1,14 @@
 from typing import List, Optional
 from datetime import datetime
-from ninja import Router, Schema, ModelSchema
+from ninja import Router, Schema
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from .models import ShyRequest, Conversation, Message, Attachment
+from django.core.exceptions import ValidationError
+from .models import ShyRequest, Message, Attachment
 from account.api import AuthBearer
+from .message_service import MessageAccessError, can_access_conversation, create_message_for_request, resolve_display_name
 from .views import send_notification
-from .utils import censor_text
+from rest_framework.authtoken.models import Token
 
 realtime_router = Router(tags=["Requests"])
 
@@ -28,6 +30,13 @@ class MessageOut(Schema):
     created_at: datetime
 
 class MessageIn(Schema):
+    body: str
+    alias: Optional[str] = None
+    tracking_code: Optional[str] = None
+
+
+class ReplyByTrackingIn(Schema):
+    tracking_code: str
     body: str
     alias: Optional[str] = None
 
@@ -68,7 +77,7 @@ class ShyRequestOut(Schema):
 
 @realtime_router.post("/", response={201: ShyRequestOut}, auth=AuthBearer())
 def create_request(request, payload: ShyRequestIn):
-    """Create a new ShyRequest. Automatically creates a Conversation and sends notifications."""
+    """Create a new ShyRequest and send notifications."""
     user = request.auth
     
     # Logic from ShyRequestSerializer.create
@@ -85,9 +94,6 @@ def create_request(request, payload: ShyRequestIn):
         country_code=country_code,
         **payload.dict(exclude={'requester_alias'})
     )
-    
-    # Automatically create conversation (logic migrated from serializer)
-    Conversation.objects.create(request=shy_request)
     
     # Logic from ShyRequestViewSet.perform_create
     try:
@@ -108,39 +114,74 @@ def list_requests(request):
     """List requests for the logged-in user."""
     user = request.auth
     qs = ShyRequest.objects.filter(
-        Q(user=user) | Q(user__isnull=True, requester_email__iexact=user.email)
+        Q(user=user)
+        | Q(user__isnull=True, requester_email__iexact=user.email)
+        | Q(target_email__iexact=user.email)
     ).order_by("-created_at")
     return [_shy_request_to_dict(r) for r in qs]
 
-@realtime_router.get("/{request_id}/conversation", response=List[MessageOut])
+@realtime_router.get("/{request_id}/conversation", response={200: List[MessageOut], 403: dict})
 def get_conversation(request, request_id: int):
-    """Retrieve messages for a given request."""
+    """Retrieve messages for a given request (owner token or tracking_code query param)."""
     shy_request = get_object_or_404(ShyRequest, pk=request_id)
-    conversation, _ = Conversation.objects.get_or_create(request=shy_request)
-    messages = conversation.messages.order_by("created_at")
+    user = _get_user_from_request(request)
+    tracking_code = (request.GET.get("tracking_code") or "").strip()
+    if not can_access_conversation(shy_request, user=user, tracking_code=tracking_code):
+        return 403, {"detail": "Provide owner Bearer token or valid tracking_code to access this conversation."}
+    messages = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
     
-    return [_message_to_dict(msg) for msg in messages]
+    return 200, [_message_to_dict(msg) for msg in messages]
 
-@realtime_router.post("/{request_id}/messages", response={201: MessageOut})
+@realtime_router.post("/{request_id}/messages", response={201: MessageOut, 400: dict, 403: dict})
 def send_message(request, request_id: int, payload: MessageIn):
-    """Send a message for a request (REST alternative to WebSocket)."""
+    """Send a request message (owner token) or responder message (tracking_code)."""
     shy_request = get_object_or_404(ShyRequest, pk=request_id)
-    conversation, _ = Conversation.objects.get_or_create(request=shy_request)
-    
-    clean_body, blocked = censor_text(payload.body)
-    
-    author = request.auth if hasattr(request, 'auth') and request.auth else None
-    
-    msg = Message.objects.create(
-        conversation=conversation,
-        sender=Message.Sender.REQUESTER,
-        author=author,
-        sender_display_name=payload.alias or "",
-        body=payload.body,
-        clean_body=clean_body,
-        is_blocked=blocked,
-    )
+
+    user = _get_user_from_request(request)
+    tracking_code = (payload.tracking_code or "").strip()
+    if not can_access_conversation(shy_request, user=user, tracking_code=tracking_code):
+        return 403, {
+            "detail": "Provide owner Bearer token or valid tracking_code to access this request conversation."
+        }
+    try:
+        msg = create_message_for_request(
+            shy_request,
+            payload.body,
+            user=user,
+            tracking_code=tracking_code,
+            alias=payload.alias,
+        )
+    except MessageAccessError as exc:
+        return 403, {"detail": str(exc)}
+    except ValidationError as exc:
+        return 400, {"detail": exc.messages}
     return 201, _message_to_dict(msg)
+
+
+@realtime_router.post("/reply-by-tracking", response={201: MessageOut, 400: dict, 403: dict, 404: dict})
+def reply_by_tracking(request, payload: ReplyByTrackingIn):
+    """Reply to a request with tracking_code (no login required)."""
+    shy_request = get_object_or_404(ShyRequest, tracking_code=payload.tracking_code.strip())
+    try:
+        msg = create_message_for_request(
+            shy_request,
+            payload.body,
+            tracking_code=payload.tracking_code.strip(),
+            alias=payload.alias,
+        )
+    except MessageAccessError as exc:
+        return 403, {"detail": str(exc)}
+    except ValidationError as exc:
+        return 400, {"detail": exc.messages}
+    return 201, _message_to_dict(msg)
+
+
+@realtime_router.get("/by-tracking/{tracking_code}/conversation", response=List[MessageOut])
+def get_conversation_by_tracking(request, tracking_code: str):
+    """Get conversation by tracking code (for responder portal without login)."""
+    shy_request = get_object_or_404(ShyRequest, tracking_code=tracking_code.strip())
+    messages = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
+    return [_message_to_dict(msg) for msg in messages]
 
 # ---------- Helpers ----------
 
@@ -170,19 +211,7 @@ def _shy_request_to_dict(obj):
     }
 
 def _message_to_dict(msg):
-    # Resolve display name similar to MessageSerializer
-    req = msg.conversation.request
-    display_name = msg.sender_display_name
-    if not display_name:
-        if msg.sender == Message.Sender.REQUESTER and msg.author:
-            display_name = getattr(msg.author, "alias_name", None) or req.requester_alias or req.requester_name
-        elif msg.sender == Message.Sender.REQUESTER:
-            display_name = req.requester_alias or req.requester_name
-        elif msg.sender == Message.Sender.RESPONDER:
-            display_name = req.requester_alias or req.requester_name or "Responder"
-        else:
-            display_name = "Staff"
-
+    display_name = resolve_display_name(msg)
     return {
         "id": msg.id,
         "sender": msg.sender,
@@ -193,3 +222,18 @@ def _message_to_dict(msg):
         "is_blocked": msg.is_blocked,
         "created_at": msg.created_at,
     }
+
+
+def _get_user_from_request(request):
+    """Auth is optional on these endpoints; attempt bearer token lookup when not already authenticated."""
+    user = getattr(request, "auth", None) or getattr(request, "user", None)
+    if user and getattr(user, "is_authenticated", False):
+        return user
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if auth_header.lower().startswith("bearer "):
+        token_key = auth_header.split(" ", 1)[1].strip()
+        if token_key:
+            tok = Token.objects.filter(key=token_key).select_related("user").first()
+            if tok and tok.user and tok.user.is_active:
+                return tok.user
+    return None

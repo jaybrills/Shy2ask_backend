@@ -1,10 +1,22 @@
-from rest_framework import permissions, viewsets
+from django.shortcuts import get_object_or_404
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.db.models import Q
+from django.core.exceptions import ValidationError
 
-from .models import Conversation, Message, ShyRequest
-from .serializers import MessageSerializer, ShyRequestSerializer
-from .utils import censor_text
+from .models import Message, ShyRequest
+from .message_service import (
+    MessageAccessError,
+    can_access_conversation,
+    create_message_for_request,
+)
+from .serializers import (
+    MessageInputSerializer,
+    MessageSerializer,
+    ReplyByTrackingSerializer,
+    ShyRequestSerializer,
+)
 
 
 class ShyRequestViewSet(viewsets.ModelViewSet):
@@ -13,12 +25,16 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post"]
 
     def get_queryset(self):
-        qs = ShyRequest.objects.order_by("-created_at")
+        qs = ShyRequest.objects.select_related("user").prefetch_related("attachments").order_by("-created_at")
         tracking = self.request.query_params.get("tracking_code")
         if tracking:
             return qs.filter(tracking_code=tracking)
         if self.request.user.is_authenticated:
-            return qs.filter(user=self.request.user)
+            email = (self.request.user.email or "").lower()
+            return qs.filter(
+                Q(user=self.request.user)
+                | Q(target_email__iexact=email)
+            )
         return qs.none()
 
     def perform_create(self, serializer):
@@ -39,27 +55,89 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except Exception as e:
             print(f"Error sending initial notification: {e}")
 
+    def _tracking_code(self, request) -> str:
+        return (request.data.get("tracking_code") or request.query_params.get("tracking_code") or "").strip()
+
+    def _get_conversation_request(self, request, pk):
+        shy_request = get_object_or_404(ShyRequest.objects.select_related("user"), pk=pk)
+        tracking_code = self._tracking_code(request)
+        if not can_access_conversation(shy_request, user=request.user, tracking_code=tracking_code):
+            raise MessageAccessError("You are not allowed to access this conversation.")
+        return shy_request, tracking_code
+
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
-        shy_request = self.get_object()
-        conversation, _ = Conversation.objects.get_or_create(request=shy_request)
-        serializer = MessageSerializer(
-            data=request.data,
-            context={
-                "conversation": conversation,
-                "author": request.user if request.user.is_authenticated else None,
-                "alias": (request.data.get("alias") or "").strip() or None,
-            },
-        )
-        serializer.is_valid(raise_exception=True)
-        msg = serializer.save()
-        return Response(MessageSerializer(msg).data, status=201)
+        payload = MessageInputSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        try:
+            shy_request, tracking_code = self._get_conversation_request(request, pk)
+            msg = create_message_for_request(
+                shy_request,
+                payload.validated_data["body"],
+                user=request.user,
+                tracking_code=tracking_code or payload.validated_data.get("tracking_code"),
+                alias=payload.validated_data.get("alias"),
+            )
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(MessageSerializer(msg).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], permission_classes=[permissions.AllowAny])
     def conversation(self, request, pk=None):
-        shy_request = self.get_object()
-        conversation, _ = Conversation.objects.get_or_create(request=shy_request)
-        messages_qs = conversation.messages.order_by("created_at")
+        try:
+            shy_request, _ = self._get_conversation_request(request, pk)
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        messages_qs = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
         data = MessageSerializer(messages_qs, many=True).data
         return Response(data)
 
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[permissions.AllowAny],
+        url_path="reply",
+    )
+    def reply_on_request(self, request):
+        payload = ReplyByTrackingSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        tracking_code = payload.validated_data["tracking_code"].strip()
+        shy_request = get_object_or_404(ShyRequest, tracking_code=tracking_code)
+
+        try:
+            msg = create_message_for_request(
+                shy_request,
+                payload.validated_data["body"],
+                tracking_code=tracking_code,
+                alias=payload.validated_data.get("alias"),
+            )
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "request_id": shy_request.id,
+                "tracking_code": shy_request.tracking_code,
+                "message": MessageSerializer(msg).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[permissions.AllowAny],
+        url_path=r"conversation/by-tracking/(?P<tracking_code>[^/.]+)",
+    )
+    def conversation_by_tracking(self, request, tracking_code=None):
+        shy_request = get_object_or_404(ShyRequest, tracking_code=(tracking_code or "").strip())
+        messages_qs = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
+        return Response(MessageSerializer(messages_qs, many=True).data)

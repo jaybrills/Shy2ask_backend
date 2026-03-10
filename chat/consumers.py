@@ -1,12 +1,11 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from asgiref.sync import sync_to_async
 from django.contrib.auth.models import AnonymousUser
-from django.utils import timezone
 from django.template.loader import render_to_string
 
-from .models import Conversation, Message, ShyRequest, Notification
+from .message_service import create_message_for_request, resolve_display_name
+from .models import Message, ShyRequest, Notification
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -49,11 +48,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
         else:
-            # Authenticated user - must be the requester
-            if request.user != self.user:
+            # Authenticated: owner -> requester; target_email -> responder
+            if request.user == self.user:
+                self.is_responder = False
+            elif request.target_email and self.user.email.lower() == request.target_email.lower():
+                self.is_responder = True
+            else:
                 await self.close()
                 return
-            self.is_responder = False
 
         # Join room group
         await self.channel_layer.group_add(
@@ -96,20 +98,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 message_data = await self.create_message(body, self.user, alias=alias)
                 if message_data:
                     print(f"Message created successfully: ID={message_data.get('id')}")
-                    
-                    # Send notifications (now in async context, safe to use await)
-                    notification_info = message_data.pop("notification_info", None)
-                    if notification_info:
-                        await self.send_notifications_for_message(notification_info)
-                    # AI deal detection (fire-and-forget): detect deal from conversation, create Deal, notify subscribers
-                    try:
-                        import asyncio
-                        from .ai_services import run_deal_detection_and_notify
-                        asyncio.get_event_loop().run_in_executor(
-                            None, run_deal_detection_and_notify, self.request_id
-                        )
-                    except Exception:
-                        pass
                     # Send message to room group
                     await self.channel_layer.group_send(
                         self.room_group_name,
@@ -161,14 +149,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_recent_messages(self):
-        """Get recent messages for the conversation; include display_name (alias or profile default)."""
+        """Get recent messages for this request; include display_name (alias or profile default)."""
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
-            conversation, _ = Conversation.objects.get_or_create(request=request)
-            messages = conversation.messages.order_by("-created_at")[:50]
+            messages = Message.objects.filter(request=request).select_related("author", "request").order_by("-created_at")[:50]
             out = []
             for msg in reversed(messages):
-                display_name = msg.sender_display_name or self._message_display_name(msg, request)
+                display_name = resolve_display_name(msg)
                 out.append({
                     "id": msg.id,
                     "body": msg.clean_body or msg.body,
@@ -184,72 +171,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
             print(f"Error getting recent messages: {e}")
             return []
 
-    def _message_display_name(self, msg, request):
-        """Resolve display name for a message (request alias or profile default)."""
-        if msg.sender == Message.Sender.REQUESTER:
-            if msg.author:
-                return getattr(msg.author, "alias_name", None) or request.requester_alias or request.requester_name
-            return request.requester_alias or request.requester_name
-        if msg.sender == Message.Sender.RESPONDER:
-            return request.requester_alias or request.requester_name or "Responder"
-        return "Staff"
-
     @database_sync_to_async
     def create_message(self, body, user, alias=None):
         """Create a new message. alias = display name for this message (request-wise); else use profile/request default."""
         try:
-            from .utils import censor_text
-
             request = ShyRequest.objects.get(pk=self.request_id)
-            conversation, _ = Conversation.objects.get_or_create(request=request)
-
-            clean_body, blocked = censor_text(body)
-
-            if self.is_responder:
-                sender = Message.Sender.RESPONDER
-                author = None
-            else:
-                sender = Message.Sender.REQUESTER
-                author = user
-
-            display_name = (alias or "").strip()
-            if not display_name and sender == Message.Sender.REQUESTER and author:
-                display_name = getattr(author, "alias_name", "") or request.requester_alias or request.requester_name
-            if not display_name and sender == Message.Sender.REQUESTER:
-                display_name = request.requester_alias or request.requester_name
-            if not display_name and sender == Message.Sender.RESPONDER:
-                display_name = request.requester_alias or request.requester_name or "Responder"
-            if not display_name:
-                display_name = "Staff"
-
-            message = Message.objects.create(
-                conversation=conversation,
-                sender=sender,
-                author=author,
-                sender_display_name=display_name if (alias or "").strip() else "",  # store only if client set alias
-                body=body,
-                clean_body=clean_body,
-                is_blocked=blocked,
-            )
-            # Use resolved display_name for response (in case we computed it)
-            out_display = (alias or "").strip() or display_name
-
-            notification_info = {
-                "is_responder": self.is_responder,
-                "request": request,
-                "body": body,
-            }
+            try:
+                message = create_message_for_request(
+                    request,
+                    body,
+                    user=user,
+                    tracking_code=self.tracking_code if self.is_responder else None,
+                    alias=alias,
+                )
+            except Exception:
+                return None
 
             return {
                 "id": message.id,
                 "body": message.clean_body or message.body,
                 "sender": message.sender,
                 "sender_display": message.get_sender_display(),
-                "display_name": out_display,
+                "display_name": resolve_display_name(message),
                 "is_blocked": message.is_blocked,
                 "created_at": message.created_at.isoformat(),
                 "created_at_display": message.created_at.strftime("%b %d, %H:%M"),
-                "notification_info": notification_info,
             }
         except Exception as e:
             print(f"Error creating message: {e}")
@@ -273,48 +219,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }
         )
     
-    async def send_notifications_for_message(self, notification_info):
-        """Send notifications for a newly created message (async context)."""
-        try:
-            from django.conf import settings
-            is_responder = notification_info["is_responder"]
-            request = notification_info["request"]
-            body = notification_info["body"]
-            
-            if is_responder:
-                # Notify requester and admin
-                await self.send_notification_async(
-                    subject="New reply from responder",
-                    body=f"Responder replied to your request {request.tracking_code}",
-                    recipient=request.requester_email,
-                    related_request=request,
-                )
-                await self.send_notification_async(
-                    subject="New reply from responder",
-                    body=body,
-                    recipient=settings.ADMIN_NOTIFY_EMAIL,
-                    related_request=request,
-                )
-            else:
-                # Notify admin
-                await self.send_notification_async(
-                    subject="New reply from requester",
-                    body=body,
-                    recipient=settings.ADMIN_NOTIFY_EMAIL,
-                    related_request=request,
-                )
-        except Exception as e:
-            print(f"Error sending notifications: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    @sync_to_async
-    def send_notification_async(self, subject, body, recipient, related_request):
-        """Async wrapper for send_notification."""
-        from .views import send_notification
-        send_notification(subject, body, recipient, related_request)
-
-
 class NotificationConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for real-time notifications."""
 
@@ -419,4 +323,3 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             pass
         except Exception as e:
             print(f"Error marking notification read: {e}")
-

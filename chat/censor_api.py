@@ -6,6 +6,7 @@ POST /censor/image — upload image, OCR + censor extracted text
 from typing import Optional
 
 from ninja import File, Router, Schema, UploadedFile
+from django.conf import settings
 
 from .censor_engine import censor_image, censor_text_full
 
@@ -39,17 +40,29 @@ class ImageCensorOut(Schema):
 @censor_router.post("/text", response={200: TextCensorOut})
 def censor_text_endpoint(request, payload: TextCensorIn):
     """
-    Censor plain text. Uses DB terms (any language) + built-in lists + optional AI.
+    Censor plain text with OpenAI-first moderation + strict illegal-intent policy checks.
     Returns censored text, blocked flag, detected terms, and categories.
     """
+    if not getattr(settings, "OPENAI_API_KEY", None):
+        return 200, {
+            "censored_text": "[BLOCKED]",
+            "blocked": True,
+            "detected": [{"term": "[system]", "category": "moderation_unavailable"}],
+            "categories": ["moderation_unavailable"],
+            "ai_toxic_score": None,
+            "ai_provider": None,
+        }
+
     result = censor_text_full(
         payload.text or "",
-        use_db_terms=True,
+        # API endpoint is OpenAI policy-first (user requested), no offline lists for this path.
+        use_db_terms=False,
+        use_builtin_rules=False,
         use_ai_censor=True,
         log_source="api",
     )
     return 200, {
-        "censored_text": result.censored_text,
+        "censored_text": "[BLOCKED]" if result.blocked else result.censored_text,
         "blocked": result.blocked,
         "detected": result.detected,
         "categories": result.categories,

@@ -1,32 +1,24 @@
 from django.test import TestCase
 from decimal import Decimal
-from chat.models import ShyRequest, Conversation, Message, Notification, Deal
+from chat.models import ShyRequest, Message, Notification, Deal
 from account.models import User
 
 class ChatModelTest(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(email="sender@example.com", password="password")
+        self.user = User.objects.create_user(email="sender@shy2ask.com", password="password")
         self.request = ShyRequest.objects.create(
             requester_name="Requester",
-            requester_email="req@example.com",
+            requester_email="req@shy2ask.com",
             description="Test"
         )
 
     def test_shy_request_creation(self):
         self.assertEqual(self.request.status, ShyRequest.Status.DRAFT)
         self.assertTrue(self.request.tracking_code)
-        # Conversation should be created by signal/serializer (I added it to serializer)
-        # Actually in models.py it's not automated yet, I put it in Serializer.
-        # But for tests creating via models.objects.create won't trigger serializer.
-        # Let's check if there's a signal. None found.
-        # So I should create it manually if it's a model test.
-        conv = Conversation.objects.create(request=self.request)
-        self.assertEqual(str(conv), f"Conversation for {self.request}")
 
     def test_message_creation(self):
-        conv = Conversation.objects.create(request=self.request)
         msg = Message.objects.create(
-            conversation=conv,
+            request=self.request,
             sender=Message.Sender.REQUESTER,
             body="Hello"
         )
