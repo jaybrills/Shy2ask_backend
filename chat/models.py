@@ -87,6 +87,12 @@ class ShyRequest(models.Model):
         if not self.tracking_code:
             self.tracking_code = generate_tracking_code()
         self.quoted_price_chf = self.calculate_price()
+        # Validate description content for safety (same censor as messages)
+        if self.description:
+            clean_body, blocked = censor_text(self.description)
+            if blocked:
+                raise ValidationError({"description": ["Description contains blocked content."]})
+            self.description = clean_body
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:

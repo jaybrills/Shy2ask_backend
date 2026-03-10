@@ -95,7 +95,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 
         messages_qs = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
         data = MessageSerializer(messages_qs, many=True).data
-        return Response(data)
+        return Response({"description": shy_request.description, "messages": data})
 
     @action(
         detail=False,

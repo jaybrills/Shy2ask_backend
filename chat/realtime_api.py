@@ -120,7 +120,12 @@ def list_requests(request):
     ).order_by("-created_at")
     return [_shy_request_to_dict(r) for r in qs]
 
-@realtime_router.get("/{request_id}/conversation", response={200: List[MessageOut], 403: dict})
+class ConversationOut(Schema):
+    description: str
+    messages: List[MessageOut]
+
+
+@realtime_router.get("/{request_id}/conversation", response={200: ConversationOut, 403: dict})
 def get_conversation(request, request_id: int):
     """Retrieve messages for a given request (owner token or tracking_code query param)."""
     shy_request = get_object_or_404(ShyRequest, pk=request_id)
@@ -130,7 +135,7 @@ def get_conversation(request, request_id: int):
         return 403, {"detail": "Provide owner Bearer token or valid tracking_code to access this conversation."}
     messages = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
     
-    return 200, [_message_to_dict(msg) for msg in messages]
+    return 200, {"description": shy_request.description, "messages": [_message_to_dict(msg) for msg in messages]}
 
 @realtime_router.post("/{request_id}/messages", response={201: MessageOut, 400: dict, 403: dict})
 def send_message(request, request_id: int, payload: MessageIn):
@@ -176,12 +181,12 @@ def reply_by_tracking(request, payload: ReplyByTrackingIn):
     return 201, _message_to_dict(msg)
 
 
-@realtime_router.get("/by-tracking/{tracking_code}/conversation", response=List[MessageOut])
+@realtime_router.get("/by-tracking/{tracking_code}/conversation", response=ConversationOut)
 def get_conversation_by_tracking(request, tracking_code: str):
     """Get conversation by tracking code (for responder portal without login)."""
     shy_request = get_object_or_404(ShyRequest, tracking_code=tracking_code.strip())
     messages = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
-    return [_message_to_dict(msg) for msg in messages]
+    return {"description": shy_request.description, "messages": [_message_to_dict(msg) for msg in messages]}
 
 # ---------- Helpers ----------
 

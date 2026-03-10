@@ -48,7 +48,8 @@ class RealtimeAPITest(TestCase):
         self.assertEqual(response.status_code, 403)
         response_ok = self.client.get(f"/requests/{req.id}/conversation?tracking_code={req.tracking_code}")
         self.assertEqual(response_ok.status_code, 200)
-        self.assertIsInstance(response_ok.json(), list)
+        self.assertIn("description", response_ok.json())
+        self.assertIn("messages", response_ok.json())
 
     def test_reply_by_tracking_ninja(self):
         req = ShyRequest.objects.create(requester_name="R3", requester_email="r3@e.com", description="D3")
