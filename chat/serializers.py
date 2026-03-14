@@ -158,3 +158,35 @@ class ReplyByTrackingSerializer(serializers.Serializer):
     tracking_code = serializers.CharField()
     body = serializers.CharField()
     alias = serializers.CharField(required=False, allow_blank=True)
+
+
+class CensorTextInputSerializer(serializers.Serializer):
+    text = serializers.CharField()
+
+
+class CensorResultSerializer(serializers.Serializer):
+    censored_text = serializers.CharField()
+    blocked = serializers.BooleanField()
+    detected = serializers.ListField(child=serializers.JSONField())
+    categories = serializers.ListField(child=serializers.CharField())
+    ai_toxic_score = serializers.FloatField(required=False, allow_null=True)
+    ai_provider = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class CensorImageResultSerializer(CensorResultSerializer):
+    extracted_text = serializers.CharField()
+    ocr_available = serializers.BooleanField()
+
+
+class SubscriptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    subscription_type = serializers.CharField()
+    request_id = serializers.IntegerField(allow_null=True)
+    tracking_code = serializers.CharField(allow_null=True)
+    is_active = serializers.BooleanField()
+    created_at = serializers.CharField()
+
+
+class SubscriptionCreateSerializer(serializers.Serializer):
+    subscription_type = serializers.CharField()
+    request_id = serializers.IntegerField(required=False, allow_null=True)

@@ -1,9 +1,11 @@
 from django.conf import settings
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
+from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 
@@ -16,10 +18,15 @@ from .message_service import (
 )
 from account.api_views import BearerTokenAuthentication
 from .serializers import (
+    CensorImageResultSerializer,
+    CensorResultSerializer,
+    CensorTextInputSerializer,
     MessageInputSerializer,
     MessageSerializer,
     ReplyByTrackingSerializer,
     ShyRequestSerializer,
+    SubscriptionCreateSerializer,
+    SubscriptionSerializer,
 )
 
 
@@ -147,6 +154,11 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 class CensorTextView(APIView):
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        request=CensorTextInputSerializer,
+        responses=CensorResultSerializer,
+        tags=["Censor"],
+    )
     def post(self, request):
         text = request.data.get("text") or ""
         if not getattr(settings, "OPENAI_API_KEY", None):
@@ -184,6 +196,14 @@ class CensorImageView(APIView):
     permission_classes = [permissions.AllowAny]
     parser_classes = [MultiPartParser]
 
+    @extend_schema(
+        request=inline_serializer(
+            name="CensorImageUpload",
+            fields={"image": serializers.ImageField()},
+        ),
+        responses=CensorImageResultSerializer,
+        tags=["Censor"],
+    )
     def post(self, request):
         image = request.FILES.get("image")
         if not image:
@@ -214,6 +234,7 @@ class SubscriptionListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [BearerTokenAuthentication]
 
+    @extend_schema(responses=SubscriptionSerializer(many=True), tags=["Subscriptions"])
     def get(self, request):
         qs = Subscription.objects.active().for_user(request.user).with_request()
         return Response(
@@ -230,6 +251,11 @@ class SubscriptionListCreateView(APIView):
             ]
         )
 
+    @extend_schema(
+        request=SubscriptionCreateSerializer,
+        responses=SubscriptionSerializer,
+        tags=["Subscriptions"],
+    )
     def post(self, request):
         subscription_type = (request.data.get("subscription_type") or "").strip()
         request_id = request.data.get("request_id")
@@ -277,6 +303,7 @@ class SubscriptionDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [BearerTokenAuthentication]
 
+    @extend_schema(responses={204: None}, tags=["Subscriptions"])
     def delete(self, request, subscription_id):
         subscription = Subscription.objects.for_user(request.user).filter(pk=subscription_id).first()
         if not subscription:

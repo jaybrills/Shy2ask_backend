@@ -43,6 +43,30 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertContains(response, "POST /auth/register")
         self.assertContains(response, "GET /api/requests/")
         self.assertContains(response, "POST /api/censor/text/")
+        self.assertContains(response, "/swagger/")
+
+    def test_markdown_and_openapi_docs_routes_render(self):
+        markdown_response = self.client.get("/docs/api.md")
+        self.assertEqual(markdown_response.status_code, 200)
+        self.assertIn("text/markdown", markdown_response["Content-Type"])
+        self.assertContains(markdown_response, "Shy2Ask – API Documentation")
+
+        schema_response = self.client.get("/openapi.json")
+        self.assertEqual(schema_response.status_code, 200)
+        self.assertIn("openapi", json.loads(schema_response.content))
+
+        swagger_response = self.client.get("/swagger/")
+        self.assertEqual(swagger_response.status_code, 200)
+
+    def test_api_root_lists_all_main_endpoint_groups(self):
+        response = self.client.get("/api/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("auth", payload)
+        self.assertIn("profile", payload)
+        self.assertIn("chat", payload)
+        self.assertTrue(payload["auth"]["login"].endswith("/api/auth/login"))
+        self.assertTrue(payload["chat"]["requests"].endswith("/api/requests/"))
 
     @patch("account.api_views.create_and_send_verification_otp")
     def test_register_endpoint_creates_unverified_user(self, mock_send_verification):

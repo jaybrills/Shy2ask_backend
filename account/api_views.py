@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import permissions, serializers, status
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.authtoken.models import Token
@@ -69,6 +70,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "email", "is_verified", "date_joined", "updated_at", "profile_picture"]
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_picture(self, obj):
         return obj.profile_picture.url if obj.profile_picture else None
 

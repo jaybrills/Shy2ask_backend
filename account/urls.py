@@ -8,4 +8,6 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("docs", views.docs, name="docs"),
     path("docs/", views.docs),
+    path("docs/api.md", views.docs_markdown, name="docs-markdown"),
+    path("docs/api.md/", views.docs_markdown),
 ]

@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'channels',
     'rest_framework',
     'rest_framework.authtoken',
+    'drf_spectacular',
     'account',
     'chat',
     'corsheaders',
@@ -223,6 +224,14 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Shy2Ask API",
+    "DESCRIPTION": "Live OpenAPI schema for the Shy2Ask backend.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 # ── Celery ────────────────────────────────────────────────────────────────────
