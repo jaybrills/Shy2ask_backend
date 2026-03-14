@@ -3,8 +3,10 @@ import string
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import models
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import models
+
 from .utils import censor_text
 
 
@@ -13,7 +15,177 @@ def generate_tracking_code(length: int = 10) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-class ShyRequest(models.Model):
+def _normalize_email(email: str) -> str:
+    if not email:
+        return ""
+    return get_user_model().objects.normalize_email(email).lower()
+
+
+def _user_for_email(email: str):
+    email = _normalize_email(email)
+    if not email:
+        return None
+    return get_user_model().objects.filter(email__iexact=email).first()
+
+
+def user_display_name_for(user) -> str:
+    if not user:
+        return ""
+    alias = getattr(user, "alias_name", "") or ""
+    if alias:
+        return alias
+    full_name_getter = getattr(user, "get_full_name", None)
+    full_name = full_name_getter().strip() if callable(full_name_getter) else ""
+    if full_name:
+        return full_name
+    email = _normalize_email(getattr(user, "email", ""))
+    return email.split("@")[0] if email else ""
+
+
+class CreatedAtModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        abstract = True
+
+
+class TimeStampedModel(CreatedAtModel):
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class EmailUserResolutionModel(models.Model):
+    class Meta:
+        abstract = True
+
+    def _sync_email_user_pair(self, *, user_field: str, email_field: str):
+        user = getattr(self, user_field, None)
+        email = _normalize_email(getattr(self, email_field, ""))
+
+        if user:
+            email = _normalize_email(getattr(user, "email", "")) or email
+        elif email:
+            user = _user_for_email(email)
+
+        setattr(self, user_field, user)
+        setattr(self, email_field, email)
+        return user, email
+
+
+class ShyRequestQuerySet(models.QuerySet):
+    def with_related(self):
+        return self.select_related("user", "requester_user", "target_user").prefetch_related("attachments")
+
+    def by_tracking_code(self, tracking_code: str | None):
+        tracking_code = (tracking_code or "").strip()
+        return self.filter(tracking_code=tracking_code) if tracking_code else self
+
+    def open(self):
+        return self.exclude(status__in=[ShyRequest.Status.COMPLETED, ShyRequest.Status.REJECTED])
+
+    def submitted(self):
+        return self.exclude(status=ShyRequest.Status.DRAFT)
+
+    def for_participant(self, *, user=None, email: str = ""):
+        clauses = models.Q()
+        normalized_email = _normalize_email(email)
+        if getattr(user, "is_authenticated", False):
+            clauses |= models.Q(user=user)
+            clauses |= models.Q(requester_user=user)
+            clauses |= models.Q(target_user=user)
+            normalized_email = normalized_email or _normalize_email(getattr(user, "email", ""))
+        if normalized_email:
+            clauses |= models.Q(requester_email__iexact=normalized_email)
+            clauses |= models.Q(target_email__iexact=normalized_email)
+        return self.filter(clauses) if clauses else self.none()
+
+
+class ShyRequestManager(models.Manager.from_queryset(ShyRequestQuerySet)):
+    def create_submission(self, *, actor=None, status=None, **validated_data):
+        if actor and getattr(actor, "is_authenticated", False):
+            validated_data.setdefault("user", actor)
+            validated_data.setdefault("requester_user", actor)
+            validated_data.setdefault("requester_email", getattr(actor, "email", ""))
+            validated_data.setdefault("requester_alias", getattr(actor, "alias_name", "") or "")
+            validated_data.setdefault("requester_name", user_display_name_for(actor))
+        if status:
+            validated_data.setdefault("status", status)
+        instance = self.model(**validated_data)
+        instance.save()
+        return instance
+
+
+class ActiveShyRequestManager(ShyRequestManager):
+    def get_queryset(self):
+        return super().get_queryset().open()
+
+
+class MessageQuerySet(models.QuerySet):
+    def with_related(self):
+        return self.select_related("author", "request", "sender_user", "recipient_user")
+
+    def conversation(self):
+        return self.exclude(message_kind=Message.Kind.NOTE).order_by("created_at")
+
+    def for_request(self, shy_request):
+        return self.filter(request=shy_request)
+
+
+class MessageManager(models.Manager.from_queryset(MessageQuerySet)):
+    pass
+
+
+class ConversationMessageManager(MessageManager):
+    def get_queryset(self):
+        return super().get_queryset().conversation()
+
+
+class NotificationQuerySet(models.QuerySet):
+    def unread(self):
+        return self.filter(is_read=False)
+
+    def for_recipient(self, *, user=None, email: str = ""):
+        normalized_email = _normalize_email(email)
+        clauses = models.Q()
+        if getattr(user, "is_authenticated", False):
+            clauses |= models.Q(recipient_user=user)
+            normalized_email = normalized_email or _normalize_email(getattr(user, "email", ""))
+        if normalized_email:
+            clauses |= models.Q(recipient_email__iexact=normalized_email)
+        return self.filter(clauses) if clauses else self.none()
+
+
+class NotificationManager(models.Manager.from_queryset(NotificationQuerySet)):
+    pass
+
+
+class DealQuerySet(models.QuerySet):
+    def with_related(self):
+        return self.select_related("request", "requester_user", "target_user")
+
+
+class DealManager(models.Manager.from_queryset(DealQuerySet)):
+    pass
+
+
+class SubscriptionQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(is_active=True)
+
+    def for_user(self, user):
+        return self.filter(user=user)
+
+    def with_request(self):
+        return self.select_related("request")
+
+
+class SubscriptionManager(models.Manager.from_queryset(SubscriptionQuerySet)):
+    pass
+
+
+class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
     class ServiceChannel(models.TextChoices):
         EMAIL = ("email", "E-mail")
         LETTER = ("letter", "Letter")
@@ -28,6 +200,20 @@ class ShyRequest(models.Model):
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    requester_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="requested_shy_requests",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="targeted_shy_requests",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
     )
     
     tracking_code = models.CharField(max_length=12, unique=True, blank=True)
@@ -59,8 +245,7 @@ class ShyRequest(models.Model):
         max_length=20, choices=Status.choices, default=Status.DRAFT
     )
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    objects = ShyRequestManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -83,10 +268,99 @@ class ShyRequest(models.Model):
         self.status = new_status
         self.save(update_fields=["status", "updated_at"])
 
+    @property
+    def requester_identity(self):
+        return self.requester_user or self.user
+
+    @property
+    def requester_display_name(self) -> str:
+        return self.requester_alias or self.requester_name or user_display_name_for(self.requester_identity)
+
+    @property
+    def target_display_name(self) -> str:
+        return self.target_name or user_display_name_for(self.target_user) or "Target"
+
+    def _generate_unique_tracking_code(self) -> str:
+        while True:
+            tracking_code = generate_tracking_code()
+            exists = type(self).objects.filter(tracking_code=tracking_code).exclude(pk=self.pk).exists()
+            if not exists:
+                return tracking_code
+
+    def sync_participants(self, save: bool = True):
+        if self.user_id and not self.requester_user_id:
+            self.requester_user = self.user
+
+        requester_user, _ = self._sync_email_user_pair(
+            user_field="requester_user",
+            email_field="requester_email",
+        )
+        target_user, _ = self._sync_email_user_pair(
+            user_field="target_user",
+            email_field="target_email",
+        )
+
+        if requester_user:
+            self.user = requester_user
+        elif self.user_id and not self.requester_user_id:
+            self.requester_user = self.user
+            requester_user = self.user
+
+        if requester_user:
+            self.requester_alias = self.requester_alias or getattr(requester_user, "alias_name", "") or ""
+            self.requester_name = self.requester_name or user_display_name_for(requester_user)
+        if target_user:
+            self.target_name = self.target_name or user_display_name_for(target_user)
+
+        if save:
+            self.save(
+                update_fields=[
+                    "user",
+                    "requester_user",
+                    "target_user",
+                    "requester_email",
+                    "target_email",
+                    "updated_at",
+                ]
+            )
+
+    def ensure_description_message(self):
+        message, created = Message.objects.get_or_create(
+            request=self,
+            message_kind=Message.Kind.INITIAL_REQUEST,
+            defaults={
+                "sender": Message.Actor.REQUESTER,
+                "recipient": Message.Actor.TARGET,
+                "author": self.requester_identity,
+                "sender_user": self.requester_identity,
+                "recipient_user": self.target_user,
+                "sender_email": self.requester_email,
+                "recipient_email": self.target_email,
+                "sender_display_name": self.requester_display_name,
+                "recipient_display_name": self.target_display_name,
+                "body": self.description,
+            },
+        )
+        if not created:
+            message.sender = Message.Actor.REQUESTER
+            message.recipient = Message.Actor.TARGET
+            message.author = self.requester_identity
+            message.sender_user = self.requester_identity
+            message.recipient_user = self.target_user
+            message.sender_email = self.requester_email
+            message.recipient_email = self.target_email
+            message.sender_display_name = self.requester_display_name
+            message.recipient_display_name = self.target_display_name
+            message.body = self.description
+            message.save()
+        return message
+
     def save(self, *args, **kwargs):
+        is_new = self._state.adding
         if not self.tracking_code:
-            self.tracking_code = generate_tracking_code()
+            self.tracking_code = self._generate_unique_tracking_code()
         self.quoted_price_chf = self.calculate_price()
+        self.sync_participants(save=False)
         # Validate description content for safety (same censor as messages)
         if self.description:
             clean_body, blocked = censor_text(self.description)
@@ -94,6 +368,8 @@ class ShyRequest(models.Model):
                 raise ValidationError({"description": ["Description contains blocked content."]})
             self.description = clean_body
         super().save(*args, **kwargs)
+        if self.description or is_new:
+            self.ensure_description_message()
 
     def __str__(self) -> str:
         return f"Request by {self.requester_name} ({self.service_channel})"
@@ -110,34 +386,68 @@ class Attachment(models.Model):
         return self.file.name
 
 
-class Message(models.Model):
-    class Sender(models.TextChoices):
+class Message(EmailUserResolutionModel, CreatedAtModel):
+    class Actor(models.TextChoices):
         REQUESTER = ("requester", "Requester")
         STAFF = ("staff", "Staff")
-        RESPONDER = ("responder", "Responder")  # reply via tracking code (no login)
+        TARGET = ("target", "Target")
+        SYSTEM = ("system", "System")
+
+    class Kind(models.TextChoices):
+        INITIAL_REQUEST = ("initial_request", "Initial request")
+        REPLY = ("reply", "Reply")
+        NOTE = ("note", "Note")
 
     request = models.ForeignKey(
         ShyRequest, related_name="messages", on_delete=models.CASCADE
     )
-    sender = models.CharField(max_length=20, choices=Sender.choices)
-    author = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    sender = models.CharField(max_length=20, choices=Actor.choices)
+    recipient = models.CharField(
+        max_length=20, choices=Actor.choices, default=Actor.TARGET
     )
+    message_kind = models.CharField(
+        max_length=30, choices=Kind.choices, default=Kind.REPLY
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="authored_chat_messages",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    sender_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="sent_chat_messages",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    recipient_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="received_chat_messages",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    sender_email = models.EmailField(blank=True)
+    recipient_email = models.EmailField(blank=True)
     sender_display_name = models.CharField(
         max_length=120,
         blank=True,
         help_text="Display name for this message (e.g. alias). If blank, derived from request/profile.",
     )
+    recipient_display_name = models.CharField(max_length=120, blank=True)
     body = models.TextField()
     clean_body = models.TextField(blank=True)
     is_blocked = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+    objects = MessageManager()
 
     class Meta:
         ordering = ["created_at"]
         indexes = [
             models.Index(fields=["request", "created_at"]),
             models.Index(fields=["sender", "created_at"]),
+            models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
         ]
 
@@ -149,6 +459,18 @@ class Message(models.Model):
         super().save(*args, **kwargs)
 
     def clean(self):
+        self._sync_email_user_pair(user_field="sender_user", email_field="sender_email")
+        self._sync_email_user_pair(user_field="recipient_user", email_field="recipient_email")
+        if not self.author_id:
+            self.author = self.sender_user
+        if self.sender == self.Actor.REQUESTER and not self.sender_display_name:
+            self.sender_display_name = self.request.requester_display_name
+        if self.sender == self.Actor.TARGET and not self.sender_display_name:
+            self.sender_display_name = self.request.target_display_name
+        if self.recipient == self.Actor.REQUESTER and not self.recipient_display_name:
+            self.recipient_display_name = self.request.requester_display_name
+        if self.recipient == self.Actor.TARGET and not self.recipient_display_name:
+            self.recipient_display_name = self.request.target_display_name
         clean_body, blocked = censor_text(self.body or "")
         self.clean_body = clean_body
         self.is_blocked = blocked
@@ -156,8 +478,15 @@ class Message(models.Model):
             raise ValidationError("Message contains blocked content.")
 
 
-class Notification(models.Model):
+class Notification(EmailUserResolutionModel, models.Model):
     recipient_email = models.EmailField()
+    recipient_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chat_notifications",
+    )
     subject = models.CharField(max_length=200)
     body = models.TextField()
     sent_at = models.DateTimeField(auto_now_add=True)
@@ -166,6 +495,7 @@ class Notification(models.Model):
     related_request = models.ForeignKey(
         ShyRequest, on_delete=models.CASCADE, null=True, blank=True
     )
+    objects = NotificationManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -175,6 +505,7 @@ class Notification(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        self._sync_email_user_pair(user_field="recipient_user", email_field="recipient_email")
         if not self.created_at:
             from django.utils import timezone
             self.created_at = timezone.now()
@@ -184,7 +515,7 @@ class Notification(models.Model):
         return f"Notification to {self.recipient_email}"
 
 
-class Deal(models.Model):
+class Deal(TimeStampedModel):
     class Status(models.TextChoices):
         PROPOSED = ("proposed", "Proposed")
         AGREED = ("agreed", "Agreed")
@@ -201,6 +532,20 @@ class Deal(models.Model):
     request = models.OneToOneField(
         ShyRequest, related_name="deal", on_delete=models.CASCADE
     )
+    requester_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="requester_deals",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="target_deals",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=8, default="INR")
     platform_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -210,13 +555,15 @@ class Deal(models.Model):
     invoice_number = models.CharField(max_length=40, blank=True)
     ai_detected = models.BooleanField(default=False, help_text="True if deal was detected by AI from conversation.")
     ai_summary = models.TextField(blank=True, help_text="AI-generated summary of the deal.")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    objects = DealManager()
 
     def calculate_fee(self) -> Decimal:
         return (self.amount or Decimal("0")) * Decimal("0.03")
 
     def save(self, *args, **kwargs):
+        if self.request_id:
+            self.requester_user = self.request.requester_user or self.request.user
+            self.target_user = self.request.target_user
         self.platform_fee = self.calculate_fee()
         if not self.invoice_number:
             self.invoice_number = f"INV-{self.request.tracking_code}-{self.pk or ''}".strip("-")
@@ -228,7 +575,7 @@ class Deal(models.Model):
         self.save(update_fields=["payment_reference", "status", "updated_at", "platform_fee"])
 
 
-class Subscription(models.Model):
+class Subscription(CreatedAtModel):
     """User subscriptions: request updates, deal alerts, optional daily digest (all AI-enhanced)."""
     class Type(models.TextChoices):
         REQUEST_UPDATES = ("request_updates", "Request updates (new messages)")
@@ -243,7 +590,7 @@ class Subscription(models.Model):
     )
     subscription_type = models.CharField(max_length=30, choices=Type.choices)
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    objects = SubscriptionManager()
 
     class Meta:
         unique_together = [["user", "request", "subscription_type"]]
@@ -251,6 +598,53 @@ class Subscription(models.Model):
 
     def __str__(self):
         return f"{self.user_id} {self.get_subscription_type_display()} ({self.request_id or 'all'})"
+
+
+class ActiveShyRequest(ShyRequest):
+    objects = ActiveShyRequestManager()
+
+    class Meta:
+        proxy = True
+        verbose_name = "Active request"
+        verbose_name_plural = "Active requests"
+
+
+class ConversationMessage(Message):
+    objects = ConversationMessageManager()
+
+    class Meta:
+        proxy = True
+        verbose_name = "Conversation message"
+        verbose_name_plural = "Conversation messages"
+
+
+def link_user_references(user):
+    email = _normalize_email(getattr(user, "email", ""))
+    if not email:
+        return
+
+    ShyRequest.objects.filter(requester_user__isnull=True, requester_email__iexact=email).update(
+        requester_user=user,
+        user=user,
+    )
+    ShyRequest.objects.filter(target_user__isnull=True, target_email__iexact=email).update(
+        target_user=user,
+    )
+    Message.objects.filter(sender_user__isnull=True, sender_email__iexact=email).update(
+        sender_user=user,
+    )
+    Message.objects.filter(recipient_user__isnull=True, recipient_email__iexact=email).update(
+        recipient_user=user,
+    )
+    Notification.objects.filter(recipient_user__isnull=True, recipient_email__iexact=email).update(
+        recipient_user=user,
+    )
+    Deal.objects.filter(requester_user__isnull=True, request__requester_email__iexact=email).update(
+        requester_user=user,
+    )
+    Deal.objects.filter(target_user__isnull=True, request__target_email__iexact=email).update(
+        target_user=user,
+    )
 
 
 # ----- Censor engine: store offensive terms in DB (any language) -----

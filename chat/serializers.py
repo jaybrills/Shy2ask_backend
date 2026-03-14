@@ -1,7 +1,11 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from .models import Attachment, Message, ShyRequest
-from .message_service import resolve_display_name
+from .message_service import resolve_display_name, resolve_recipient_name
+from .models import Attachment, Message, ShyRequest, user_display_name_for
+
+
+User = get_user_model()
 
 
 class AttachmentSerializer(serializers.ModelSerializer):
@@ -13,23 +17,66 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 class MessageSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
+    recipient_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
-        fields = ["id", "sender", "sender_display_name", "display_name", "body", "clean_body", "is_blocked", "created_at"]
-        read_only_fields = ["id", "clean_body", "is_blocked", "created_at", "sender", "display_name"]
+        fields = [
+            "id",
+            "message_kind",
+            "sender",
+            "recipient",
+            "sender_display_name",
+            "recipient_display_name",
+            "display_name",
+            "recipient_name",
+            "body",
+            "clean_body",
+            "is_blocked",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "message_kind",
+            "clean_body",
+            "is_blocked",
+            "created_at",
+            "sender",
+            "recipient",
+            "display_name",
+            "recipient_name",
+        ]
 
     def get_display_name(self, obj):
         return resolve_display_name(obj)
 
+    def get_recipient_name(self, obj):
+        return resolve_recipient_name(obj)
 
 class ShyRequestSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)
+    requester_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    target_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    requester_name = serializers.CharField(required=False, allow_blank=True)
+    requester_email = serializers.EmailField(required=False, allow_blank=True)
+    target_name = serializers.CharField(required=False, allow_blank=True)
+    target_email = serializers.EmailField(required=False, allow_blank=True)
 
     class Meta:
         model = ShyRequest
         fields = [
             "id",
+            "user",
+            "requester_user",
+            "target_user",
             "tracking_code",
             "requester_name",
             "requester_email",
@@ -50,6 +97,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "user",
             "tracking_code",
             "quoted_price_chf",
             "status",
@@ -57,6 +105,30 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "created_at",
             "attachments",
         ]
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        actor = request.user if request.user.is_authenticated else None
+
+        requester_user = attrs.get("requester_user") or actor
+        target_user = attrs.get("target_user")
+
+        if requester_user:
+            attrs.setdefault("requester_user", requester_user)
+            attrs.setdefault("requester_email", getattr(requester_user, "email", ""))
+            attrs.setdefault("requester_alias", getattr(requester_user, "alias_name", "") or "")
+            attrs.setdefault("requester_name", user_display_name_for(requester_user))
+
+        if target_user:
+            attrs.setdefault("target_email", getattr(target_user, "email", ""))
+            attrs.setdefault("target_name", user_display_name_for(target_user))
+
+        if not attrs.get("requester_name"):
+            raise serializers.ValidationError({"requester_name": "Requester name is required."})
+        if not attrs.get("requester_email") and not attrs.get("requester_user"):
+            raise serializers.ValidationError({"requester_email": "Requester email or requester_user is required."})
+
+        return attrs
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -66,8 +138,8 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             requester_alias = getattr(user, "alias_name", "") or ""
 
         country_code = validated_data.pop("country_code", None) or self.context.get("country_code", "")
-        shy_request = ShyRequest.objects.create(
-            user=user,
+        shy_request = ShyRequest.objects.create_submission(
+            actor=user,
             requester_alias=requester_alias,
             status=ShyRequest.Status.SUBMITTED,
             country_code=country_code,

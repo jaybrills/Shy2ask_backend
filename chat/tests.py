@@ -39,7 +39,7 @@ class ShyRequestVerificationTest(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["message"]["sender"], "responder")
+        self.assertEqual(response.data["message"]["sender"], "target")
         self.assertEqual(response.data["tracking_code"], shy_request.tracking_code)
 
     def test_messages_endpoint_requires_owner_or_tracking(self):
@@ -62,7 +62,7 @@ class ShyRequestVerificationTest(TestCase):
             format="json",
         )
         self.assertEqual(allowed.status_code, 201)
-        self.assertEqual(allowed.data["sender"], "responder")
+        self.assertEqual(allowed.data["sender"], "target")
 
     def test_blocked_content_rejected(self):
         shy_request = ShyRequest.objects.create(
@@ -114,8 +114,8 @@ class ShyRequestVerificationTest(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["sender"], "responder")
+        self.assertEqual(response.data["sender"], "target")
 
         convo = self.client.get(f"/api/requests/{shy_request.id}/conversation/")
         self.assertEqual(convo.status_code, 200)
-        self.assertGreaterEqual(len(convo.data), 1)
+        self.assertGreaterEqual(len(convo.data["messages"]), 2)

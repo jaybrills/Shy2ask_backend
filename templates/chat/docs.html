@@ -2,7 +2,7 @@
 {% load static %}
 
 {% block content %}
-<div class="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+<div class="min-h-screen bg-[radial-gradient(circle_at_top,_#fff7e8,_#f5efe3_55%,_#ebe4d8)] py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-7xl mx-auto">
         <div class="lg:flex lg:gap-8">
             <!-- Sidebar -->
@@ -16,6 +16,9 @@
                     </a>
                     <a href="#api-reference" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
                         API Reference
+                    </a>
+                    <a href="#data-model" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
+                        Data Model
                     </a>
                     <a href="#websockets" class="text-gray-600 hover:bg-gray-100 group flex items-center px-3 py-2 text-sm font-medium rounded-md">
                         WebSockets (WSS)
@@ -32,7 +35,7 @@
                     <section id="introduction">
                         <h1 class="text-4xl font-black text-gray-900 mb-4" style="font-family: 'Fredoka One', cursive;">Documentation</h1>
                         <p class="text-lg text-gray-600 leading-relaxed">
-                            Welcome to the Shy2Ask documentation. Our platform allows you to bridge the gap between shyness and action by relaying your questions anonymously.
+                            Welcome to the Shy2Ask API docs. These endpoints reflect the current Django REST Framework backend and the live WebSocket routes.
                         </p>
                     </section>
 
@@ -46,21 +49,103 @@
                                 <li><strong>Maintain Anonymity:</strong> Your identity is never revealed to the recipient.</li>
                                 <li><strong>Facilitate Communication:</strong> Relay responses back to you through our secure platform.</li>
                             </ul>
+                            <p>The backend now auto-resolves participant links. If you send a <code>requester_user</code> or <code>target_user</code>, the model fills the matching email automatically. If you only send an email and a matching user already exists, the related user field is filled during save.</p>
                         </div>
                     </section>
 
                     <section id="api-reference" class="pt-8 border-t-4 border-black">
                         <h2 class="text-2xl font-black text-gray-900 mb-4">API Reference</h2>
-                        <p class="text-gray-600 mb-4">Our backend provides a RESTful API for integration.</p>
-                        <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white">
-                            <p>GET /api/requests/</p>
-                            <p class="text-gray-400"># Lists all your active requests</p>
+                        <p class="text-gray-600 mb-6">Base URL example: <code>http://localhost:8000</code></p>
+
+                        <div class="space-y-6">
+                            <div>
+                                <h3 class="text-lg font-black mb-3">Auth</h3>
+                                <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white space-y-1">
+                                    <p>POST /auth/register</p>
+                                    <p>POST /auth/login</p>
+                                    <p>POST /auth/verify-email</p>
+                                    <p>POST /auth/resend-verification</p>
+                                    <p>POST /auth/forgot-password</p>
+                                    <p>POST /auth/reset-password</p>
+                                    <p>POST /auth/check-email</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 class="text-lg font-black mb-3">Profile</h3>
+                                <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white space-y-1">
+                                    <p>GET /profile/me</p>
+                                    <p>PATCH /profile/me</p>
+                                    <p>GET /profile/users</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 class="text-lg font-black mb-3">Requests & Messages</h3>
+                                <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white space-y-1">
+                                    <p>GET /api/requests/</p>
+                                    <p>POST /api/requests/</p>
+                                    <p>GET /api/requests/{id}/</p>
+                                    <p>GET /api/requests/{id}/conversation/</p>
+                                    <p>POST /api/requests/{id}/messages/</p>
+                                    <p>POST /api/requests/reply/</p>
+                                    <p>GET /api/requests/conversation/by-tracking/{tracking_code}/</p>
+                                </div>
+                                <div class="mt-4 bg-amber-50 border-2 border-black rounded-lg p-4 text-sm text-gray-700 space-y-2">
+                                    <p><strong>Create request payload:</strong></p>
+                                    <pre class="whitespace-pre-wrap overflow-x-auto"><code>{
+  "requester_name": "Asha",
+  "requester_email": "asha@example.com",
+  "requester_user": 12,
+  "requester_alias": "HiddenAsha",
+  "target_name": "Ravi",
+  "target_email": "ravi@example.com",
+  "target_user": 33,
+  "description": "Can you call me this weekend?",
+  "service_channel": "email",
+  "call_minutes": 0
+}</code></pre>
+                                    <p>You may provide either email fields, user ids, or both. The model will normalize emails, auto-link known users, and create the initial request message automatically.</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 class="text-lg font-black mb-3">Censor & Subscriptions</h3>
+                                <div class="bg-gray-900 rounded-lg p-4 font-mono text-sm text-white space-y-1">
+                                    <p>POST /api/censor/text/</p>
+                                    <p>POST /api/censor/image/</p>
+                                    <p>GET /api/subscriptions/</p>
+                                    <p>POST /api/subscriptions/</p>
+                                    <p>DELETE /api/subscriptions/{id}/</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="data-model" class="pt-8 border-t-4 border-black">
+                        <h2 class="text-2xl font-black text-gray-900 mb-4">Data Model</h2>
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div class="rounded-xl border-2 border-black bg-stone-50 p-4">
+                                <h3 class="text-lg font-black mb-2">Shared model behavior</h3>
+                                <ul class="list-disc pl-5 text-sm text-gray-700 space-y-1">
+                                    <li>Abstract timestamp models keep creation and update dates consistent.</li>
+                                    <li>Custom querysets/managers centralize participant filtering and eager loading.</li>
+                                    <li>Email and user relations stay synchronized at the model layer during save.</li>
+                                </ul>
+                            </div>
+                            <div class="rounded-xl border-2 border-black bg-stone-50 p-4">
+                                <h3 class="text-lg font-black mb-2">Proxy models</h3>
+                                <ul class="list-disc pl-5 text-sm text-gray-700 space-y-1">
+                                    <li><code>ActiveShyRequest</code> represents non-completed requests.</li>
+                                    <li><code>ConversationMessage</code> represents user-facing chat history ordered by creation time.</li>
+                                </ul>
+                            </div>
                         </div>
                     </section>
 
                     <section id="websockets" class="pt-8 border-t-4 border-black">
                         <h2 class="text-2xl font-black text-gray-900 mb-4">WebSockets (WSS)</h2>
-                        <p class="text-gray-600 mb-4">Real-time updates are handled via WebSockets (WSS).</p>
+                        <p class="text-gray-600 mb-4">Real-time updates are handled via Django Channels WebSockets.</p>
                         <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
                             <div class="flex">
                                 <div class="flex-shrink-0">
@@ -70,7 +155,10 @@
                                 </div>
                                 <div class="ml-3">
                                     <p class="text-sm text-blue-700">
-                                        WSS endpoint: <code>wss://backend.shy2ask.com/ws/chat/{request_id}/</code>
+                                        Chat: <code>ws://host/ws/chat/{request_id}/</code> or <code>wss://host/ws/chat/{request_id}/</code>
+                                    </p>
+                                    <p class="text-sm text-blue-700 mt-1">
+                                        Notifications: <code>ws://host/ws/notifications/</code>
                                     </p>
                                 </div>
                             </div>
@@ -80,7 +168,7 @@
                     <section id="security" class="pt-8 border-t-4 border-black pb-8">
                         <h2 class="text-2xl font-black text-gray-900 mb-4">Security & Privacy</h2>
                         <p class="text-gray-600 leading-relaxed">
-                            Privacy is our core value. All data is encrypted at rest and in transit. We strictly adhere to Swiss data protection standards.
+                            Privacy is our core value. Messages are moderated before storage, emails are normalized before linking, and request access is guarded by authenticated ownership checks or the request tracking code.
                         </p>
                     </section>
                 </div>

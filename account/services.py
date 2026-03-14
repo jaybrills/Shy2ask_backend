@@ -24,8 +24,8 @@ def send_verification_email(email: str, otp: str):
 def create_and_send_reset_otp(email: str):
     from .models import PasswordResetOTP, User
 
-    email = User.objects.normalize_email(email)
-    user = User.objects.filter(email=email).first()
+    email = User.objects.normalize_email(email).lower()
+    user = User.objects.find_by_email(email)
     if not user:
         return None  # Don't reveal if email exists
     otp = generate_otp(6)
@@ -38,18 +38,15 @@ def create_and_send_reset_otp(email: str):
 def verify_otp_and_reset_password(email: str, otp_code: str, new_password: str):
     from .models import PasswordResetOTP, User
 
-    email = User.objects.normalize_email(email)
+    email = User.objects.normalize_email(email).lower()
     now = timezone.now()
     record = (
-        PasswordResetOTP.objects.filter(
-            email=email, otp_code=otp_code, expires_at__gt=now
-        )
-        .order_by("-created_at")
+        PasswordResetOTP.objects.filter(email__iexact=email, otp_code=otp_code).valid(now).latest_first()
         .first()
     )
     if not record:
         return False
-    user = User.objects.filter(email=email).first()
+    user = User.objects.find_by_email(email)
     if not user:
         return False
     user.set_password(new_password)
@@ -81,18 +78,13 @@ def verify_email_otp(email: str, otp_code: str):
     """
     from .models import EmailVerificationOTP, User
 
-    email = User.objects.normalize_email(email)
-    user = User.objects.filter(email=email).first()
+    email = User.objects.normalize_email(email).lower()
+    user = User.objects.find_by_email(email)
     if not user:
         return None
     now = timezone.now()
     record = (
-        EmailVerificationOTP.objects.filter(
-            user=user,
-            otp_code=otp_code.strip(),
-            expires_at__gt=now,
-        )
-        .order_by("-created_at")
+        EmailVerificationOTP.objects.filter(user=user, otp_code=otp_code.strip()).valid(now).latest_first()
         .first()
     )
     if not record:

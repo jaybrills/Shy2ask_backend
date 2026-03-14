@@ -17,6 +17,7 @@ ALLOWED_HOSTS = ['*']
 AUTH_USER_MODEL = "account.User"
 INSTALLED_APPS = [
     'daphne',  # ASGI server; must be before django.contrib so runserver uses Daphne
+    'unfold',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -35,7 +36,6 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'ninja.compatibility.files.fix_request_files_middleware',
     'django.middleware.security.SecurityMiddleware',
     # Must be before CommonMiddleware so CORS headers are added to all responses.
     'corsheaders.middleware.CorsMiddleware',
@@ -127,6 +127,81 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+UNFOLD = {
+    "SITE_TITLE": "Shy2Ask Control Center",
+    "SITE_HEADER": "Shy2Ask Control Center",
+    "SITE_SUBHEADER": "Operations, trust, and conversation workflows",
+    "SITE_SYMBOL": "shield_lock",
+    "SITE_URL": "/",
+    "SITE_LOGO": {
+        "light": "shy2ask.unfold.logo_light",
+        "dark": "shy2ask.unfold.logo_dark",
+    },
+    "SITE_ICON": {
+        "light": "shy2ask.unfold.icon_light",
+        "dark": "shy2ask.unfold.icon_dark",
+    },
+    "SITE_FAVICONS": [
+        {
+            "rel": "icon",
+            "type": "image/svg+xml",
+            "href": "/static/admin/brand-mark.svg",
+        },
+    ],
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "SHOW_BACK_BUTTON": True,
+    "DASHBOARD_CALLBACK": "shy2ask.unfold.dashboard_callback",
+    "STYLES": [
+        "/static/admin/css/unfold.css",
+    ],
+    "COLORS": {
+        "base": {
+            "50": "250 248 243",
+            "100": "242 237 228",
+            "200": "224 214 196",
+            "300": "199 182 157",
+            "400": "166 145 116",
+            "500": "133 111 83",
+            "600": "110 90 67",
+            "700": "84 68 51",
+            "800": "60 49 38",
+            "900": "35 29 23",
+            "950": "20 16 13",
+        },
+        "primary": {
+            "50": "236 249 245",
+            "100": "211 241 232",
+            "200": "170 226 210",
+            "300": "115 205 182",
+            "400": "57 175 149",
+            "500": "17 146 121",
+            "600": "13 117 98",
+            "700": "14 93 79",
+            "800": "16 74 63",
+            "900": "16 61 53",
+            "950": "6 33 29",
+        },
+        "font": {
+            "subtle-light": "var(--color-base-500)",
+            "subtle-dark": "var(--color-base-400)",
+            "default-light": "var(--color-base-700)",
+            "default-dark": "var(--color-base-200)",
+            "important-light": "var(--color-base-950)",
+            "important-dark": "var(--color-base-50)",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": "shy2ask.unfold.sidebar_navigation",
+    },
+    "ACCOUNT": {
+        "navigation": "shy2ask.unfold.account_links",
+    },
+    "ENVIRONMENT": "shy2ask.unfold.environment_label",
+}
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

@@ -16,21 +16,21 @@ class MessageAccessError(PermissionDenied):
 def can_access_conversation(shy_request: ShyRequest, user=None, tracking_code: str | None = None) -> bool:
     """Requester (owner) or responder (tracking code) can access the conversation."""
     user = user if getattr(user, "is_authenticated", False) else None
-    if user and shy_request.user_id == user.id:
-        return True
-    if user and shy_request.target_email and user.email.lower() == shy_request.target_email.lower():
+    if user and user.id in {shy_request.user_id, shy_request.requester_user_id, shy_request.target_user_id}:
         return True
     return bool(tracking_code and tracking_code == shy_request.tracking_code)
 
 
 def _resolve_sender(shy_request: ShyRequest, user=None, tracking_code: str | None = None):
     user = user if getattr(user, "is_authenticated", False) else None
-    if user and shy_request.user_id == user.id:
-        return Message.Sender.REQUESTER, user
+    if user and user.id in {shy_request.user_id, shy_request.requester_user_id}:
+        return Message.Actor.REQUESTER, user
+    if user and shy_request.target_user_id == user.id:
+        return Message.Actor.TARGET, user
     if user and shy_request.target_email and user.email.lower() == shy_request.target_email.lower():
-        return Message.Sender.RESPONDER, user
+        return Message.Actor.TARGET, user
     if tracking_code and tracking_code == shy_request.tracking_code:
-        return Message.Sender.RESPONDER, None
+        return Message.Actor.TARGET, None
     raise MessageAccessError("You are not allowed to send messages for this request.")
 
 
@@ -40,13 +40,27 @@ def resolve_display_name(msg: Message) -> str:
         return msg.sender_display_name
 
     req = msg.request
-    if msg.sender == Message.Sender.REQUESTER and msg.author:
-        return getattr(msg.author, "alias_name", None) or req.requester_alias or req.requester_name
-    if msg.sender == Message.Sender.REQUESTER:
-        return req.requester_alias or req.requester_name
-    if msg.sender == Message.Sender.RESPONDER:
-        return req.requester_alias or req.requester_name or "Responder"
+    if msg.sender == Message.Actor.REQUESTER and msg.author:
+        return getattr(msg.author, "alias_name", None) or req.requester_display_name
+    if msg.sender == Message.Actor.REQUESTER:
+        return req.requester_display_name
+    if msg.sender == Message.Actor.TARGET:
+        return req.target_display_name
     return "Staff"
+
+
+def resolve_recipient_name(msg: Message) -> str:
+    if msg.recipient_display_name:
+        return msg.recipient_display_name
+
+    req = msg.request
+    if msg.recipient == Message.Actor.REQUESTER:
+        return req.requester_display_name or "Requester"
+    if msg.recipient == Message.Actor.TARGET:
+        return req.target_display_name
+    if msg.recipient == Message.Actor.STAFF:
+        return "Staff"
+    return "System"
 
 
 def create_message_for_request(
@@ -62,12 +76,35 @@ def create_message_for_request(
     sender, author = _resolve_sender(shy_request, user=user, tracking_code=tracking_code)
 
     alias_clean = (alias or "").strip()
+    if sender == Message.Actor.REQUESTER:
+        recipient = Message.Actor.TARGET
+        sender_user = shy_request.requester_identity or author
+        recipient_user = shy_request.target_user
+        sender_email = shy_request.requester_email
+        recipient_email = shy_request.target_email
+        sender_display_name = alias_clean or shy_request.requester_display_name
+        recipient_display_name = shy_request.target_display_name
+    else:
+        recipient = Message.Actor.REQUESTER
+        sender_user = shy_request.target_user or author
+        recipient_user = shy_request.requester_identity
+        sender_email = shy_request.target_email
+        recipient_email = shy_request.requester_email
+        sender_display_name = alias_clean or shy_request.target_display_name
+        recipient_display_name = shy_request.requester_display_name
 
     msg = Message(
         request=shy_request,
         sender=sender,
+        recipient=recipient,
+        message_kind=Message.Kind.REPLY,
         author=author,
-        sender_display_name=alias_clean,
+        sender_user=sender_user,
+        recipient_user=recipient_user,
+        sender_email=sender_email,
+        recipient_email=recipient_email,
+        sender_display_name=sender_display_name,
+        recipient_display_name=recipient_display_name,
         body=body,
     )
     # Enforce censoring at model level; will raise ValidationError if blocked.
@@ -86,16 +123,16 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
 
     admin_email = getattr(settings, "ADMIN_NOTIFY_EMAIL", "")
 
-    if sender == Message.Sender.RESPONDER:
+    if sender == Message.Actor.TARGET:
         send_notification(
-            subject="New reply from responder",
-            body=f"Responder replied to your request {shy_request.tracking_code}",
+            subject="New reply from target",
+            body=f"Target replied to your request {shy_request.tracking_code}",
             recipient=shy_request.requester_email,
             related_request=shy_request,
         )
         if admin_email:
             send_notification(
-                subject="New reply from responder",
+                subject="New reply from target",
                 body=body,
                 recipient=admin_email,
                 related_request=shy_request,

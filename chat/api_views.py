@@ -1,16 +1,20 @@
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
-from django.db.models import Q
 from django.core.exceptions import ValidationError
+from rest_framework.views import APIView
 
-from .models import Message, ShyRequest
+from .censor_engine import censor_image, censor_text_full
+from .models import ConversationMessage, Message, ShyRequest, Subscription
 from .message_service import (
     MessageAccessError,
     can_access_conversation,
     create_message_for_request,
 )
+from account.api_views import BearerTokenAuthentication
 from .serializers import (
     MessageInputSerializer,
     MessageSerializer,
@@ -22,19 +26,16 @@ from .serializers import (
 class ShyRequestViewSet(viewsets.ModelViewSet):
     serializer_class = ShyRequestSerializer
     permission_classes = [permissions.AllowAny]
+    authentication_classes = [BearerTokenAuthentication]
     http_method_names = ["get", "post"]
 
     def get_queryset(self):
-        qs = ShyRequest.objects.select_related("user").prefetch_related("attachments").order_by("-created_at")
+        qs = ShyRequest.objects.with_related()
         tracking = self.request.query_params.get("tracking_code")
         if tracking:
-            return qs.filter(tracking_code=tracking)
+            return qs.by_tracking_code(tracking)
         if self.request.user.is_authenticated:
-            email = (self.request.user.email or "").lower()
-            return qs.filter(
-                Q(user=self.request.user)
-                | Q(target_email__iexact=email)
-            )
+            return qs.for_participant(user=self.request.user)
         return qs.none()
 
     def perform_create(self, serializer):
@@ -93,7 +94,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
-        messages_qs = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
+        messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
         data = MessageSerializer(messages_qs, many=True).data
         return Response({"description": shy_request.description, "messages": data})
 
@@ -139,5 +140,147 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     )
     def conversation_by_tracking(self, request, tracking_code=None):
         shy_request = get_object_or_404(ShyRequest, tracking_code=(tracking_code or "").strip())
-        messages_qs = Message.objects.filter(request=shy_request).select_related("author", "request").order_by("created_at")
+        messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
         return Response(MessageSerializer(messages_qs, many=True).data)
+
+
+class CensorTextView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        text = request.data.get("text") or ""
+        if not getattr(settings, "OPENAI_API_KEY", None):
+            return Response(
+                {
+                    "censored_text": "[BLOCKED]",
+                    "blocked": True,
+                    "detected": [{"term": "[system]", "category": "moderation_unavailable"}],
+                    "categories": ["moderation_unavailable"],
+                    "ai_toxic_score": None,
+                    "ai_provider": None,
+                }
+            )
+
+        result = censor_text_full(
+            text,
+            use_db_terms=False,
+            use_builtin_rules=False,
+            use_ai_censor=True,
+            log_source="api",
+        )
+        return Response(
+            {
+                "censored_text": "[BLOCKED]" if result.blocked else result.censored_text,
+                "blocked": result.blocked,
+                "detected": result.detected,
+                "categories": result.categories,
+                "ai_toxic_score": getattr(result, "ai_toxic_score", None),
+                "ai_provider": getattr(result, "ai_provider", None),
+            }
+        )
+
+
+class CensorImageView(APIView):
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        image = request.FILES.get("image")
+        if not image:
+            return Response({"detail": "No image file provided."}, status=status.HTTP_400_BAD_REQUEST)
+        content = image.read()
+        if not content:
+            return Response({"detail": "Empty image file."}, status=status.HTTP_400_BAD_REQUEST)
+        result = censor_image(
+            content,
+            content_type=getattr(image, "content_type", None),
+            log_source="api",
+        )
+        return Response(
+            {
+                "censored_text": result.censored_text,
+                "blocked": result.blocked,
+                "detected": result.detected,
+                "categories": result.categories,
+                "extracted_text": result.extracted_text,
+                "ocr_available": result.ocr_available,
+                "ai_toxic_score": getattr(result, "ai_toxic_score", None),
+                "ai_provider": getattr(result, "ai_provider", None),
+            }
+        )
+
+
+class SubscriptionListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def get(self, request):
+        qs = Subscription.objects.active().for_user(request.user).with_request()
+        return Response(
+            [
+                {
+                    "id": s.id,
+                    "subscription_type": s.subscription_type,
+                    "request_id": s.request_id,
+                    "tracking_code": s.request.tracking_code if s.request else None,
+                    "is_active": s.is_active,
+                    "created_at": s.created_at.isoformat(),
+                }
+                for s in qs
+            ]
+        )
+
+    def post(self, request):
+        subscription_type = (request.data.get("subscription_type") or "").strip()
+        request_id = request.data.get("request_id")
+        if subscription_type not in (
+            Subscription.Type.REQUEST_UPDATES,
+            Subscription.Type.DEAL_ALERTS,
+            Subscription.Type.DAILY_DIGEST,
+        ):
+            return Response(
+                {"detail": "subscription_type must be request_updates, deal_alerts, or daily_digest"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        shy_request = None
+        if subscription_type == Subscription.Type.REQUEST_UPDATES:
+            if not request_id:
+                return Response({"detail": "request_id required for request_updates"}, status=status.HTTP_400_BAD_REQUEST)
+            shy_request = ShyRequest.objects.for_participant(user=request.user).filter(pk=request_id).first()
+            if not shy_request:
+                return Response({"detail": "Request not found or not yours."}, status=status.HTTP_400_BAD_REQUEST)
+
+        subscription, created = Subscription.objects.get_or_create(
+            user=request.user,
+            request=shy_request,
+            subscription_type=subscription_type,
+            defaults={"is_active": True},
+        )
+        if not created:
+            subscription.is_active = True
+            subscription.save(update_fields=["is_active"])
+        return Response(
+            {
+                "id": subscription.id,
+                "subscription_type": subscription.subscription_type,
+                "request_id": subscription.request_id,
+                "tracking_code": subscription.request.tracking_code if subscription.request else None,
+                "is_active": subscription.is_active,
+                "created_at": subscription.created_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SubscriptionDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def delete(self, request, subscription_id):
+        subscription = Subscription.objects.for_user(request.user).filter(pk=subscription_id).first()
+        if not subscription:
+            return Response({"detail": "Subscription not found."}, status=status.HTTP_404_NOT_FOUND)
+        subscription.is_active = False
+        subscription.save(update_fields=["is_active"])
+        return Response(status=status.HTTP_204_NO_CONTENT)

@@ -4,11 +4,32 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from .managers import UserManager
+from .managers import OTPManager, UserManager
 from .validators import validate_phone_number, validate_disposable_email
 
 
-class User(AbstractBaseUser, PermissionsMixin):
+class CreatedAtModel(models.Model):
+    created_at = models.DateTimeField(_("created at"), auto_now_add=True)
+
+    class Meta:
+        abstract = True
+
+
+class TimeStampedModel(CreatedAtModel):
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class UpdatedAtModel(models.Model):
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     """
     Custom User model that uses email as the unique identifier
     instead of username.
@@ -53,7 +74,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_('Designates whether this user has verified their email with OTP.'),
     )
     date_joined = models.DateTimeField(_('date joined'), auto_now_add=True)
-    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
 
     objects = UserManager()
 
@@ -86,7 +106,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def clean(self):
         super().clean()
-        self.email = self.__class__.objects.normalize_email(self.email)
+        self.email = self.__class__.objects.normalize_email(self.email).lower()
         
         # Normalize phone number format (validator already checked validity)
         if self.phone_number:
@@ -102,32 +122,46 @@ class User(AbstractBaseUser, PermissionsMixin):
         super().save(*args, **kwargs)
 
 
-class PasswordResetOTP(models.Model):
+class OTPBase(CreatedAtModel):
+    otp_code = models.CharField(_("OTP code"), max_length=8)
+    expires_at = models.DateTimeField(_("expires at"))
+
+    objects = OTPManager()
+
+    class Meta:
+        abstract = True
+        ordering = ["-created_at"]
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+        return self.expires_at <= timezone.now()
+
+
+class PasswordResetOTP(OTPBase):
     """One-time code for password reset; sent by email."""
     email = models.EmailField(_("email address"), db_index=True)
-    otp_code = models.CharField(_("OTP code"), max_length=8)
-    created_at = models.DateTimeField(_("created at"), auto_now_add=True)
-    expires_at = models.DateTimeField(_("expires at"))
 
     class Meta:
         verbose_name = _("password reset OTP")
         verbose_name_plural = _("password reset OTPs")
         ordering = ["-created_at"]
 
+    def save(self, *args, **kwargs):
+        self.email = User.objects.normalize_email(self.email).lower()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"OTP for {self.email}"
 
 
-class EmailVerificationOTP(models.Model):
+class EmailVerificationOTP(OTPBase):
     """One-time code for email verification after signup."""
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="email_verification_otps",
     )
-    otp_code = models.CharField(_("OTP code"), max_length=8)
-    created_at = models.DateTimeField(_("created at"), auto_now_add=True)
-    expires_at = models.DateTimeField(_("expires at"))
 
     class Meta:
         verbose_name = _("email verification OTP")
@@ -147,3 +181,17 @@ class CeleryTaskError(models.Model):
 
     def __str__(self):
         return self.task_name
+
+
+class ActiveUser(User):
+    class Meta:
+        proxy = True
+        verbose_name = _("active user")
+        verbose_name_plural = _("active users")
+
+
+class PendingVerificationUser(User):
+    class Meta:
+        proxy = True
+        verbose_name = _("pending verification user")
+        verbose_name_plural = _("pending verification users")

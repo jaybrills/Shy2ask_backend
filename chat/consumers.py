@@ -27,7 +27,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Get tracking code from query string (for responder access)
         query_string = self.scope.get("query_string", b"").decode()
         self.tracking_code = None
-        self.is_responder = False
+        self.is_target = False
         
         if query_string:
             import urllib.parse
@@ -39,20 +39,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
-        # Verify access: either authenticated requester OR responder with tracking code
+        # Verify access: either authenticated requester OR target with tracking code
         if isinstance(self.user, AnonymousUser):
-            # Check if responder access via tracking code
+            # Check if target access via tracking code
             if self.tracking_code and self.tracking_code == request.tracking_code:
-                self.is_responder = True
+                self.is_target = True
             else:
                 await self.close()
                 return
         else:
-            # Authenticated: owner -> requester; target_email -> responder
-            if request.user == self.user:
-                self.is_responder = False
+            # Authenticated: owner -> requester; target -> target
+            if self.user.id in {request.user_id, request.requester_user_id}:
+                self.is_target = False
+            elif self.user.id == request.target_user_id:
+                self.is_target = True
             elif request.target_email and self.user.email.lower() == request.target_email.lower():
-                self.is_responder = True
+                self.is_target = True
             else:
                 await self.close()
                 return
@@ -152,7 +154,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Get recent messages for this request; include display_name (alias or profile default)."""
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
-            messages = Message.objects.filter(request=request).select_related("author", "request").order_by("-created_at")[:50]
+            messages = Message.objects.filter(request=request).select_related(
+                "author",
+                "request",
+                "sender_user",
+                "recipient_user",
+            ).order_by("-created_at")[:50]
             out = []
             for msg in reversed(messages):
                 display_name = resolve_display_name(msg)
@@ -181,7 +188,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     request,
                     body,
                     user=user,
-                    tracking_code=self.tracking_code if self.is_responder else None,
+                    tracking_code=self.tracking_code if self.is_target else None,
                     alias=alias,
                 )
             except Exception:
