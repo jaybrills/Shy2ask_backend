@@ -122,6 +122,16 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertIn("token", response.json())
         self.assertEqual(response.json()["user"]["email"], self.user.email)
 
+    def test_login_works_with_api_prefix_and_trailing_slash(self):
+        response = self.client.post(
+            "/api/auth/login/",
+            data=json.dumps({"email": self.user.email, "password": "password123"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("token", response.json())
+
     @patch("account.api_views.create_and_send_reset_otp")
     def test_forgot_password_calls_service(self, mock_send_reset):
         response = self.client.post(

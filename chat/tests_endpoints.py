@@ -69,6 +69,9 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(retrieve_response.status_code, 200)
         self.assertEqual(retrieve_response.data["id"], self.request.id)
 
+        slashless_list = self.client.get("/api/requests", **self.auth_headers(self.owner_token))
+        self.assertEqual(slashless_list.status_code, 200)
+
     def test_request_conversation_and_message_endpoints(self):
         conversation = self.client.get(
             f"/api/requests/{self.request.id}/conversation/",
@@ -114,7 +117,7 @@ class ChatEndpointCoverageTest(TestCase):
 
     def test_subscriptions_create_list_and_delete(self):
         create_response = self.client.post(
-            "/api/subscriptions/",
+            "/api/subscriptions",
             {"subscription_type": Subscription.Type.REQUEST_UPDATES, "request_id": self.request.id},
             format="json",
             **self.auth_headers(self.owner_token),
@@ -127,7 +130,7 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(len(list_response.data), 1)
 
         delete_response = self.client.delete(
-            f"/api/subscriptions/{subscription_id}/",
+            f"/api/subscriptions/{subscription_id}",
             **self.auth_headers(self.owner_token),
         )
         self.assertEqual(delete_response.status_code, 204)
