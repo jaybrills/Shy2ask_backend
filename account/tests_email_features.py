@@ -1,10 +1,12 @@
 import json
+from unittest.mock import patch
 from django.test import TestCase, Client
 from account.models import User
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
 import datetime
 from account.models import EmailVerificationOTP
+from account.tasks import send_otp_email_task, send_verification_email_task
 
 class EmailFeaturesTest(TestCase):
     def setUp(self):
@@ -66,3 +68,29 @@ class EmailFeaturesTest(TestCase):
         response = self.client.post("/auth/verify-email", data=json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, 400)
         self.assertIn("Disposable email addresses are not allowed", response.json()["detail"])
+
+    @patch("account.tasks.send_templated_email")
+    def test_password_reset_email_uses_branded_templates(self, mock_send):
+        send_otp_email_task.run("user@valid.com", "123456")
+
+        self.assertTrue(mock_send.called)
+        _, kwargs = mock_send.call_args
+        self.assertEqual(kwargs["subject"], "Shy2Ask.com password reset code")
+        self.assertEqual(kwargs["recipient"], "user@valid.com")
+        self.assertEqual(kwargs["text_template"], "emails/auth_otp.txt")
+        self.assertEqual(kwargs["html_template"], "emails/auth_otp.html")
+        self.assertEqual(kwargs["context"]["otp"], "123456")
+        self.assertEqual(kwargs["context"]["app_name"], "Shy2Ask.com")
+
+    @patch("account.tasks.send_templated_email")
+    def test_verification_email_uses_branded_templates(self, mock_send):
+        send_verification_email_task.run("user@valid.com", "654321")
+
+        self.assertTrue(mock_send.called)
+        _, kwargs = mock_send.call_args
+        self.assertEqual(kwargs["subject"], "Verify your email for Shy2Ask.com")
+        self.assertEqual(kwargs["recipient"], "user@valid.com")
+        self.assertEqual(kwargs["text_template"], "emails/auth_otp.txt")
+        self.assertEqual(kwargs["html_template"], "emails/auth_otp.html")
+        self.assertEqual(kwargs["context"]["otp"], "654321")
+        self.assertEqual(kwargs["context"]["headline"], "Verify your email")

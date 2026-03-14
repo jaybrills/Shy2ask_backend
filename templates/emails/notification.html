@@ -1,0 +1,30 @@
+{% extends "emails/base.html" %}
+
+{% block body %}
+<p style="margin:0 0 14px;font-size:15px;line-height:1.7;color:#374151;">
+  {{ body }}
+</p>
+
+{% if tracking_code %}
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:20px 0;">
+  <tr>
+    <td style="padding:20px;border-radius:22px;background:#f8fafc;border:1px solid #e5e7eb;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#0f766e;">Request reference</div>
+      <div style="margin-top:8px;font-size:24px;font-weight:800;letter-spacing:0.12em;color:#111827;">{{ tracking_code }}</div>
+      {% if requester_name or target_name %}
+      <div style="margin-top:12px;font-size:14px;line-height:1.7;color:#4b5563;">
+        {% if requester_name %}<strong>Requester:</strong> {{ requester_name }}<br>{% endif %}
+        {% if target_name %}<strong>Target:</strong> {{ target_name }}{% endif %}
+      </div>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+{% endif %}
+
+<div style="margin-top:24px;">
+  <a href="{{ cta_url }}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">
+    {{ cta_label }}
+  </a>
+</div>
+{% endblock %}

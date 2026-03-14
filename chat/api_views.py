@@ -73,6 +73,61 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             raise MessageAccessError("You are not allowed to access this conversation.")
         return shy_request, tracking_code
 
+    def _viewer_role(self, request, shy_request, tracking_code: str = ""):
+        user = request.user if request.user.is_authenticated else None
+        if user and user.id in {shy_request.user_id, shy_request.requester_user_id}:
+            return Message.Actor.REQUESTER
+        if user and user.id == shy_request.target_user_id:
+            return Message.Actor.TARGET
+        if user and shy_request.target_email and getattr(user, "email", "").lower() == shy_request.target_email.lower():
+            return Message.Actor.TARGET
+        if tracking_code and tracking_code == shy_request.tracking_code:
+            return Message.Actor.TARGET
+        return None
+
+    def _conversation_response(self, request, shy_request, messages_qs, tracking_code: str = ""):
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        serialized_messages = MessageSerializer(
+            messages_qs,
+            many=True,
+            context={"viewer_role": viewer_role},
+        ).data
+        return {
+            "request": {
+                "id": shy_request.id,
+                "tracking_code": shy_request.tracking_code,
+                "status": shy_request.status,
+                "service_channel": shy_request.service_channel,
+                "description": shy_request.description,
+                "created_at": shy_request.created_at,
+            },
+            "viewer": {
+                "role": viewer_role,
+                "label": "Requester" if viewer_role == Message.Actor.REQUESTER else "Target" if viewer_role == Message.Actor.TARGET else "Guest",
+            },
+            "participants": {
+                "requester": {
+                    "role": Message.Actor.REQUESTER,
+                    "label": "Requester",
+                    "name": shy_request.requester_display_name,
+                    "email": shy_request.requester_email,
+                    "is_me": viewer_role == Message.Actor.REQUESTER,
+                },
+                "target": {
+                    "role": Message.Actor.TARGET,
+                    "label": "Target",
+                    "name": shy_request.target_display_name,
+                    "email": shy_request.target_email,
+                    "is_me": viewer_role == Message.Actor.TARGET,
+                },
+            },
+            "messages": serialized_messages,
+        }
+
+    def _message_response(self, request, shy_request, message, tracking_code: str = ""):
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        return MessageSerializer(message, context={"viewer_role": viewer_role}).data
+
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
         payload = MessageInputSerializer(data=request.data)
@@ -92,18 +147,17 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(MessageSerializer(msg).data, status=status.HTTP_201_CREATED)
+        return Response(self._message_response(request, shy_request, msg, tracking_code=tracking_code), status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], permission_classes=[permissions.AllowAny])
     def conversation(self, request, pk=None):
         try:
-            shy_request, _ = self._get_conversation_request(request, pk)
+            shy_request, tracking_code = self._get_conversation_request(request, pk)
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
         messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
-        data = MessageSerializer(messages_qs, many=True).data
-        return Response({"description": shy_request.description, "messages": data})
+        return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=tracking_code))
 
     @action(
         detail=False,
@@ -134,7 +188,11 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             {
                 "request_id": shy_request.id,
                 "tracking_code": shy_request.tracking_code,
-                "message": MessageSerializer(msg).data,
+                "viewer": {
+                    "role": Message.Actor.TARGET,
+                    "label": "Target",
+                },
+                "message": self._message_response(request, shy_request, msg, tracking_code=tracking_code),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -146,9 +204,10 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         url_path=r"conversation/by-tracking/(?P<tracking_code>[^/.]+)",
     )
     def conversation_by_tracking(self, request, tracking_code=None):
-        shy_request = get_object_or_404(ShyRequest, tracking_code=(tracking_code or "").strip())
+        normalized_tracking = (tracking_code or "").strip()
+        shy_request = get_object_or_404(ShyRequest, tracking_code=normalized_tracking)
         messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
-        return Response(MessageSerializer(messages_qs, many=True).data)
+        return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=normalized_tracking))
 
 
 class CensorTextView(APIView):

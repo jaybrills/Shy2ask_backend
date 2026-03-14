@@ -18,6 +18,12 @@ class AttachmentSerializer(serializers.ModelSerializer):
 class MessageSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     recipient_name = serializers.SerializerMethodField()
+    sender_role = serializers.SerializerMethodField()
+    recipient_role = serializers.SerializerMethodField()
+    sender_label = serializers.SerializerMethodField()
+    recipient_label = serializers.SerializerMethodField()
+    direction = serializers.SerializerMethodField()
+    is_mine = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
@@ -26,10 +32,16 @@ class MessageSerializer(serializers.ModelSerializer):
             "message_kind",
             "sender",
             "recipient",
+            "sender_role",
+            "recipient_role",
+            "sender_label",
+            "recipient_label",
             "sender_display_name",
             "recipient_display_name",
             "display_name",
             "recipient_name",
+            "direction",
+            "is_mine",
             "body",
             "clean_body",
             "is_blocked",
@@ -43,8 +55,14 @@ class MessageSerializer(serializers.ModelSerializer):
             "created_at",
             "sender",
             "recipient",
+            "sender_role",
+            "recipient_role",
+            "sender_label",
+            "recipient_label",
             "display_name",
             "recipient_name",
+            "direction",
+            "is_mine",
         ]
 
     def get_display_name(self, obj):
@@ -52,6 +70,43 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_recipient_name(self, obj):
         return resolve_recipient_name(obj)
+
+    def _viewer_role(self):
+        return self.context.get("viewer_role")
+
+    def get_sender_role(self, obj):
+        return obj.sender
+
+    def get_recipient_role(self, obj):
+        return obj.recipient
+
+    def get_sender_label(self, obj):
+        mapping = {
+            Message.Actor.REQUESTER: "Requester",
+            Message.Actor.TARGET: "Target",
+            Message.Actor.STAFF: "Staff",
+            Message.Actor.SYSTEM: "System",
+        }
+        return mapping.get(obj.sender, obj.sender.title())
+
+    def get_recipient_label(self, obj):
+        mapping = {
+            Message.Actor.REQUESTER: "Requester",
+            Message.Actor.TARGET: "Target",
+            Message.Actor.STAFF: "Staff",
+            Message.Actor.SYSTEM: "System",
+        }
+        return mapping.get(obj.recipient, obj.recipient.title())
+
+    def get_direction(self, obj):
+        viewer_role = self._viewer_role()
+        if not viewer_role:
+            return "outbound" if obj.sender == Message.Actor.REQUESTER else "inbound"
+        return "outbound" if obj.sender == viewer_role else "inbound"
+
+    def get_is_mine(self, obj):
+        viewer_role = self._viewer_role()
+        return bool(viewer_role and obj.sender == viewer_role)
 
 class ShyRequestSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)

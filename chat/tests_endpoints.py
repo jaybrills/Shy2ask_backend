@@ -78,7 +78,11 @@ class ChatEndpointCoverageTest(TestCase):
             {"tracking_code": self.request.tracking_code},
         )
         self.assertEqual(conversation.status_code, 200)
+        self.assertEqual(conversation.data["viewer"]["role"], Message.Actor.TARGET)
+        self.assertEqual(conversation.data["participants"]["target"]["is_me"], True)
         self.assertEqual(conversation.data["messages"][0]["message_kind"], Message.Kind.INITIAL_REQUEST)
+        self.assertFalse(conversation.data["messages"][0]["is_mine"])
+        self.assertEqual(conversation.data["messages"][0]["direction"], "inbound")
 
         owner_post = self.client.post(
             f"/api/requests/{self.request.id}/messages/",
@@ -89,6 +93,9 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(owner_post.status_code, 201)
         self.assertEqual(owner_post.data["sender"], Message.Actor.REQUESTER)
         self.assertEqual(owner_post.data["recipient"], Message.Actor.TARGET)
+        self.assertTrue(owner_post.data["is_mine"])
+        self.assertEqual(owner_post.data["direction"], "outbound")
+        self.assertEqual(owner_post.data["sender_role"], Message.Actor.REQUESTER)
 
         target_post = self.client.post(
             f"/api/requests/{self.request.id}/messages/",
@@ -99,6 +106,9 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(target_post.status_code, 201)
         self.assertEqual(target_post.data["sender"], Message.Actor.TARGET)
         self.assertEqual(target_post.data["recipient"], Message.Actor.REQUESTER)
+        self.assertTrue(target_post.data["is_mine"])
+        self.assertEqual(target_post.data["direction"], "outbound")
+        self.assertEqual(target_post.data["sender_role"], Message.Actor.TARGET)
 
     def test_reply_and_conversation_by_tracking_endpoints(self):
         reply = self.client.post(
@@ -108,12 +118,17 @@ class ChatEndpointCoverageTest(TestCase):
         )
         self.assertEqual(reply.status_code, 201)
         self.assertEqual(reply.data["message"]["sender"], Message.Actor.TARGET)
+        self.assertEqual(reply.data["viewer"]["role"], Message.Actor.TARGET)
+        self.assertTrue(reply.data["message"]["is_mine"])
+        self.assertEqual(reply.data["message"]["direction"], "outbound")
 
         by_tracking = self.client.get(
             f"/api/requests/conversation/by-tracking/{self.request.tracking_code}/"
         )
         self.assertEqual(by_tracking.status_code, 200)
-        self.assertGreaterEqual(len(by_tracking.data), 2)
+        self.assertIn("messages", by_tracking.data)
+        self.assertGreaterEqual(len(by_tracking.data["messages"]), 2)
+        self.assertEqual(by_tracking.data["viewer"]["role"], Message.Actor.TARGET)
 
     def test_subscriptions_create_list_and_delete(self):
         create_response = self.client.post(

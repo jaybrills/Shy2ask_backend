@@ -1,0 +1,14 @@
+{{ app_name }}
+{{ headline }}
+
+{{ intro }}
+
+{{ otp_label }}: {{ otp }}
+
+Valid for {{ expiry_minutes }} minutes.
+
+{{ primary_note }}
+{{ safety_note }}
+
+{{ footer_note }}
+Support: {{ support_email }}

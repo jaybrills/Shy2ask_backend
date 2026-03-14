@@ -4,10 +4,10 @@ All email sending is offloaded here so HTTP requests return immediately.
 Uses Django's send_mail backend for SMTP (Office365 / Gmail etc.).
 """
 from celery import shared_task
-from django.core.mail import send_mail
-from django.conf import settings
 import logging
 import json
+
+from account.emailing import build_email_context, send_templated_email
 from account.models import CeleryTaskError  # optional: DB logging
 
 logger = logging.getLogger(__name__)
@@ -26,16 +26,15 @@ def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception):
         logger.error(f"Failed to log Celery task error: {e}")
 
 
-def send_email_django(subject: str, message: str, recipient: str, html_message: str = None):
-    """Send email via Django's send_mail backend."""
+def send_email_django(*, subject: str, recipient: str, text_template: str, html_template: str, context: dict):
+    """Send branded transactional email via Django backend."""
     try:
-        send_mail(
+        send_templated_email(
             subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[recipient],
-            fail_silently=False,
-            html_message=html_message,
+            recipient=recipient,
+            text_template=text_template,
+            html_template=html_template,
+            context=context,
         )
         logger.info(f"Email sent to {recipient} via Django backend with subject '{subject}'")
     except Exception as exc:
@@ -46,14 +45,26 @@ def send_email_django(subject: str, message: str, recipient: str, html_message: 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def send_otp_email_task(self, email: str, otp: str):
     """Send password-reset OTP email asynchronously via Django backend."""
-    subject = "Shy2Ask – Password reset code"
-    message = (
-        f"Your password reset code is: {otp}\n\n"
-        "It is valid for 15 minutes.\n\n"
-        "If you did not request this, ignore this email."
+    subject = "Shy2Ask.com password reset code"
+    context = build_email_context(
+        preheader="Use this one-time code to reset your password.",
+        headline="Reset your password",
+        intro="We received a request to reset the password for your Shy2Ask.com account.",
+        otp=otp,
+        otp_label="Password reset code",
+        expiry_minutes=15,
+        primary_note="Enter this code in the app or website to continue resetting your password.",
+        safety_note="If you did not request a password reset, you can safely ignore this email.",
+        footer_note="For your security, never share this code with anyone.",
     )
     try:
-        send_email_django(subject, message, email)
+        send_email_django(
+            subject=subject,
+            recipient=email,
+            text_template="emails/auth_otp.txt",
+            html_template="emails/auth_otp.html",
+            context=context,
+        )
     except Exception as exc:
         log_task_error(self.name, (email, otp), {}, exc)
         raise self.retry(exc=exc)
@@ -62,14 +73,26 @@ def send_otp_email_task(self, email: str, otp: str):
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def send_verification_email_task(self, email: str, otp: str):
     """Send email verification OTP asynchronously via Django backend."""
-    subject = "Shy2Ask – Verify your email"
-    message = (
-        f"Your email verification code is: {otp}\n\n"
-        "It is valid for 10 minutes.\n\n"
-        "If you did not create an account, ignore this email."
+    subject = "Verify your email for Shy2Ask.com"
+    context = build_email_context(
+        preheader="Confirm your email to activate your Shy2Ask.com account.",
+        headline="Verify your email",
+        intro="Welcome to Shy2Ask.com. Use the code below to verify your email address and activate your account.",
+        otp=otp,
+        otp_label="Verification code",
+        expiry_minutes=10,
+        primary_note="Once verified, you can log in and start creating requests securely.",
+        safety_note="If you did not create a Shy2Ask.com account, you can ignore this email.",
+        footer_note="This verification code works only for a short time for your safety.",
     )
     try:
-        send_email_django(subject, message, email)
+        send_email_django(
+            subject=subject,
+            recipient=email,
+            text_template="emails/auth_otp.txt",
+            html_template="emails/auth_otp.html",
+            context=context,
+        )
     except Exception as exc:
         log_task_error(self.name, (email, otp), {}, exc)
         raise self.retry(exc=exc)
