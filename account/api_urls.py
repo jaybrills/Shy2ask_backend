@@ -1,4 +1,4 @@
-from django.urls import re_path
+from django.urls import path
 
 from .api_views import (
     CheckEmailView,
@@ -14,13 +14,22 @@ from .api_views import (
 
 
 urlpatterns = [
-    re_path(r"^auth/register/?$", RegisterView.as_view()),
-    re_path(r"^auth/login/?$", LoginView.as_view()),
-    re_path(r"^auth/forgot-password/?$", ForgotPasswordView.as_view()),
-    re_path(r"^auth/reset-password/?$", ResetPasswordView.as_view()),
-    re_path(r"^auth/verify-email/?$", VerifyEmailView.as_view()),
-    re_path(r"^auth/resend-verification/?$", ResendVerificationView.as_view()),
-    re_path(r"^auth/check-email/?$", CheckEmailView.as_view()),
-    re_path(r"^profile/me/?$", ProfileMeView.as_view()),
-    re_path(r"^profile/users/?$", UserListView.as_view()),
+    path("auth/register", RegisterView.as_view()),
+    path("auth/register/", RegisterView.as_view()),
+    path("auth/login", LoginView.as_view()),
+    path("auth/login/", LoginView.as_view()),
+    path("auth/forgot-password", ForgotPasswordView.as_view()),
+    path("auth/forgot-password/", ForgotPasswordView.as_view()),
+    path("auth/reset-password", ResetPasswordView.as_view()),
+    path("auth/reset-password/", ResetPasswordView.as_view()),
+    path("auth/verify-email", VerifyEmailView.as_view()),
+    path("auth/verify-email/", VerifyEmailView.as_view()),
+    path("auth/resend-verification", ResendVerificationView.as_view()),
+    path("auth/resend-verification/", ResendVerificationView.as_view()),
+    path("auth/check-email", CheckEmailView.as_view()),
+    path("auth/check-email/", CheckEmailView.as_view()),
+    path("profile/me", ProfileMeView.as_view()),
+    path("profile/me/", ProfileMeView.as_view()),
+    path("profile/users", UserListView.as_view()),
+    path("profile/users/", UserListView.as_view()),
 ]

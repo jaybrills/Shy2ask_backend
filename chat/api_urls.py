@@ -1,5 +1,5 @@
 from rest_framework.routers import DefaultRouter
-from django.urls import re_path
+from django.urls import path
 
 from .api_views import (
     CensorImageView,
@@ -14,9 +14,13 @@ router.trailing_slash = "/?"
 router.register("requests", ShyRequestViewSet, basename="requests")
 
 urlpatterns = [
-    re_path(r"^censor/text/?$", CensorTextView.as_view()),
-    re_path(r"^censor/image/?$", CensorImageView.as_view()),
-    re_path(r"^subscriptions/?$", SubscriptionListCreateView.as_view()),
-    re_path(r"^subscriptions/(?P<subscription_id>\d+)/?$", SubscriptionDetailView.as_view()),
+    path("censor/text", CensorTextView.as_view()),
+    path("censor/text/", CensorTextView.as_view()),
+    path("censor/image", CensorImageView.as_view()),
+    path("censor/image/", CensorImageView.as_view()),
+    path("subscriptions", SubscriptionListCreateView.as_view()),
+    path("subscriptions/", SubscriptionListCreateView.as_view()),
+    path("subscriptions/<int:subscription_id>", SubscriptionDetailView.as_view()),
+    path("subscriptions/<int:subscription_id>/", SubscriptionDetailView.as_view()),
 ]
 urlpatterns += router.urls
