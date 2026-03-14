@@ -7,6 +7,7 @@ from .api_views import (
     ShyRequestViewSet,
     SubscriptionDetailView,
     SubscriptionListCreateView,
+    UnreadNotificationListView,
 )
 
 router = DefaultRouter()
@@ -22,5 +23,9 @@ urlpatterns = [
     path("subscriptions/", SubscriptionListCreateView.as_view()),
     path("subscriptions/<int:subscription_id>", SubscriptionDetailView.as_view()),
     path("subscriptions/<int:subscription_id>/", SubscriptionDetailView.as_view()),
+    path("notifications/unread", UnreadNotificationListView.as_view()),
+    path("notifications/unread/", UnreadNotificationListView.as_view()),
+    path("messages/unread", UnreadNotificationListView.as_view()),
+    path("messages/unread/", UnreadNotificationListView.as_view()),
 ]
 urlpatterns += router.urls

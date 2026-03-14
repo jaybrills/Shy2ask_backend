@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db.models import Exists, OuterRef
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import permissions, status, viewsets
@@ -10,7 +11,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 
 from .censor_engine import censor_image, censor_text_full
-from .models import ConversationMessage, Message, ShyRequest, Subscription
+from .models import ConversationMessage, Message, Notification, ShyRequest, Subscription
 from .message_service import (
     MessageAccessError,
     can_access_conversation,
@@ -44,6 +45,14 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         if self.request.user.is_authenticated:
             return qs.for_participant(user=self.request.user)
         return qs.none()
+
+    def _with_target_reply_state(self, queryset):
+        target_reply_qs = Message.objects.filter(
+            request=OuterRef("pk"),
+            sender=Message.Actor.TARGET,
+            message_kind=Message.Kind.REPLY,
+        )
+        return queryset.annotate(has_target_reply=Exists(target_reply_qs))
 
     def perform_create(self, serializer):
         # Use any detected country code from earlier logic (if available)
@@ -209,6 +218,15 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=normalized_tracking))
 
+    @extend_schema(responses=ShyRequestSerializer(many=True), tags=["Requests"])
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def unreplied(self, request):
+        queryset = self._with_target_reply_state(
+            ShyRequest.objects.with_related().for_participant(user=request.user)
+        ).filter(has_target_reply=False)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 class CensorTextView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -370,3 +388,31 @@ class SubscriptionDetailView(APIView):
         subscription.is_active = False
         subscription.save(update_fields=["is_active"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class UnreadNotificationListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    @extend_schema(tags=["Notifications"])
+    def get(self, request):
+        notifications = (
+            Notification.objects.unread()
+            .for_recipient(user=request.user)
+            .select_related("related_request")
+            .order_by("-created_at")
+        )
+        return Response(
+            [
+                {
+                    "id": notification.id,
+                    "subject": notification.subject,
+                    "body": notification.body,
+                    "is_read": notification.is_read,
+                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                    "request_id": notification.related_request_id,
+                    "tracking_code": notification.related_request.tracking_code if notification.related_request else None,
+                }
+                for notification in notifications
+            ]
+        )

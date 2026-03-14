@@ -8,7 +8,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from account.models import User
-from chat.models import Message, ShyRequest, Subscription
+from chat.models import Message, Notification, ShyRequest, Subscription
 
 
 class ChatEndpointCoverageTest(TestCase):
@@ -129,6 +129,70 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertIn("messages", by_tracking.data)
         self.assertGreaterEqual(len(by_tracking.data["messages"]), 2)
         self.assertEqual(by_tracking.data["viewer"]["role"], Message.Actor.TARGET)
+
+    def test_unreplied_requests_endpoint_only_returns_requests_without_target_reply(self):
+        unreplied_request = self.request
+        replied_request = ShyRequest.objects.create(
+            user=self.owner,
+            requester_user=self.owner,
+            requester_name="Requester Name 2",
+            requester_email=self.owner.email,
+            requester_alias="RequesterAlias",
+            target_name="Target Name 2",
+            target_email=self.target.email,
+            description="Already answered request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        Message.objects.create(
+            request=replied_request,
+            sender=Message.Actor.TARGET,
+            recipient=Message.Actor.REQUESTER,
+            message_kind=Message.Kind.REPLY,
+            sender_user=self.target,
+            recipient_user=self.owner,
+            sender_email=self.target.email,
+            recipient_email=self.owner.email,
+            body="Answered already",
+        )
+
+        response = self.client.get("/api/requests/unreplied/", **self.auth_headers(self.owner_token))
+
+        self.assertEqual(response.status_code, 200)
+        returned_ids = {item["id"] for item in response.data}
+        self.assertIn(unreplied_request.id, returned_ids)
+        self.assertNotIn(replied_request.id, returned_ids)
+
+    def test_unread_messages_endpoint_returns_only_current_users_unread_notifications(self):
+        Notification.objects.create(
+            recipient_user=self.owner,
+            recipient_email=self.owner.email,
+            subject="Unread owner notification",
+            body="Still unread",
+            related_request=self.request,
+        )
+        Notification.objects.create(
+            recipient_user=self.owner,
+            recipient_email=self.owner.email,
+            subject="Read owner notification",
+            body="Already opened",
+            related_request=self.request,
+            is_read=True,
+        )
+        Notification.objects.create(
+            recipient_user=self.target,
+            recipient_email=self.target.email,
+            subject="Unread target notification",
+            body="Other user's notification",
+            related_request=self.request,
+        )
+
+        response = self.client.get("/api/messages/unread/", **self.auth_headers(self.owner_token))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["subject"], "Unread owner notification")
+        self.assertEqual(response.data[0]["request_id"], self.request.id)
+        self.assertEqual(response.data[0]["tracking_code"], self.request.tracking_code)
 
     def test_subscriptions_create_list_and_delete(self):
         create_response = self.client.post(
