@@ -2,14 +2,14 @@ from pathlib import Path
 
 from django.conf import settings
 from django.http import HttpResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 
 def home(request):
     return render(request, "chat/home.html")
 
 
 def docs(request):
-    return render(request, "chat/docs.html")
+    return redirect("swagger-ui")
 
 
 def docs_markdown(request):

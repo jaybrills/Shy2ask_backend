@@ -39,11 +39,8 @@ class AccountEndpointCoverageTest(TestCase):
 
     def test_docs_page_renders_current_endpoints(self):
         response = self.client.get("/docs")
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "POST /auth/register")
-        self.assertContains(response, "GET /api/requests/")
-        self.assertContains(response, "POST /api/censor/text/")
-        self.assertContains(response, "/swagger/")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].endswith("/swagger/"))
 
     def test_markdown_and_openapi_docs_routes_render(self):
         markdown_response = self.client.get("/docs/api.md")
