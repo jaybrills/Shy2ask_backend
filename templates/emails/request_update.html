@@ -1,0 +1,53 @@
+{% extends "emails/base.html" %}
+
+{% block body %}
+<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
+  Hi {{ recipient_name }},
+</p>
+
+<p style="margin:0 0 22px;font-size:15px;line-height:1.7;color:#374151;">
+  {{ summary_body }}
+</p>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="padding:22px;border-radius:22px;background:#f8fafc;border:1px solid #e5e7eb;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#0f766e;">{{ summary_title }}</div>
+      <div style="margin-top:10px;font-size:24px;font-weight:800;letter-spacing:0.12em;color:#111827;">{{ tracking_code }}</div>
+      <div style="margin-top:14px;font-size:14px;line-height:1.8;color:#4b5563;">
+        <strong>Your role:</strong> {{ recipient_role_label }}<br>
+        <strong>Requester:</strong> {{ requester_name }}{% if requester_email %} ({{ requester_email }}){% endif %}<br>
+        <strong>Target:</strong> {{ target_name }}{% if target_email %} ({{ target_email }}){% endif %}<br>
+        <strong>Channel:</strong> {{ service_channel }}<br>
+        <strong>Status:</strong> {{ status_label }}
+      </div>
+    </td>
+  </tr>
+</table>
+
+{% if message_body %}
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px;">
+  <tr>
+    <td style="padding:20px;border-radius:22px;background:#fff7ed;border:1px solid #fed7aa;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#c2410c;">{{ message_label }}</div>
+      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#7c2d12;white-space:pre-line;">{{ message_body }}</div>
+    </td>
+  </tr>
+</table>
+{% endif %}
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 26px;">
+  <tr>
+    <td style="padding:20px;border-radius:22px;background:#ecfeff;border:1px solid #a5f3fc;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#155e75;">Original request</div>
+      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#164e63;white-space:pre-line;">{{ request_description }}</div>
+    </td>
+  </tr>
+</table>
+
+<div style="margin-top:6px;">
+  <a href="{{ cta_url }}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">
+    {{ cta_label }}
+  </a>
+</div>
+{% endblock %}

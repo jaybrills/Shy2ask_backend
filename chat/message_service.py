@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError
 
+from .emailing import send_request_reply_emails
 from .models import Message, ShyRequest
 from .utils import censor_text
 
@@ -123,12 +124,24 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
 
     admin_email = getattr(settings, "ADMIN_NOTIFY_EMAIL", "")
 
+    send_request_reply_emails(shy_request, sender, body)
+
     if sender == Message.Actor.TARGET:
         send_notification(
             subject="New reply from target",
             body=f"Target replied to your request {shy_request.tracking_code}",
             recipient=shy_request.requester_email,
             related_request=shy_request,
+            use_ai_enhance=False,
+            deliver_email=False,
+        )
+        send_notification(
+            subject="New message from target",
+            body=f"Your reply on {shy_request.tracking_code} was delivered.",
+            recipient=shy_request.target_email,
+            related_request=shy_request,
+            use_ai_enhance=False,
+            deliver_email=False,
         )
         if admin_email:
             send_notification(
@@ -137,13 +150,31 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
                 recipient=admin_email,
                 related_request=shy_request,
             )
-    elif admin_email:
+    else:
+        if shy_request.target_email:
+            send_notification(
+                subject="New reply from requester",
+                body=f"Requester sent a new message on {shy_request.tracking_code}.",
+                recipient=shy_request.target_email,
+                related_request=shy_request,
+                use_ai_enhance=False,
+                deliver_email=False,
+            )
         send_notification(
-            subject="New reply from requester",
-            body=body,
-            recipient=admin_email,
+            subject="New message from requester",
+            body=f"Your reply on {shy_request.tracking_code} was delivered.",
+            recipient=shy_request.requester_email,
             related_request=shy_request,
+            use_ai_enhance=False,
+            deliver_email=False,
         )
+        if admin_email:
+            send_notification(
+                subject="New reply from requester",
+                body=body,
+                recipient=admin_email,
+                related_request=shy_request,
+            )
 
     def _deal_detection_job():
         try:

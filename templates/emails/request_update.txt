@@ -1,0 +1,26 @@
+{{ app_name }}
+{{ headline }}
+
+{{ intro }}
+
+Hi {{ recipient_name }},
+
+{{ summary_body }}
+
+Tracking code: {{ tracking_code }}
+Your role: {{ recipient_role_label }}
+Requester: {{ requester_name }}{% if requester_email %} ({{ requester_email }}){% endif %}
+Target: {{ target_name }}{% if target_email %} ({{ target_email }}){% endif %}
+Channel: {{ service_channel }}
+Status: {{ status_label }}
+
+{% if message_body %}{{ message_label }}:
+{{ message_body }}
+
+{% endif %}Original request:
+{{ request_description }}
+
+Open: {{ cta_url }}
+
+{{ footer_note }}
+Support: {{ support_email }}

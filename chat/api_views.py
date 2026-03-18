@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 
 from .censor_engine import censor_image, censor_text_full
+from .emailing import send_request_created_emails
 from .models import ConversationMessage, Message, Notification, ShyRequest, Subscription
 from .message_service import (
     MessageAccessError,
@@ -59,16 +60,28 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         country_code = getattr(self.request, "detected_country", "") or ""
         instance = serializer.save(country_code=country_code)
 
-        # Trigger real-time notifications for the newly created request
+        # Send participant emails plus in-app notifications for the new request.
         try:
             from .views import send_notification
+
+            send_request_created_emails(instance)
             send_notification(
-                subject="New request created",
-                body=f"Your request with tracking code {instance.tracking_code} has been created successfully.",
+                subject="Request created successfully",
+                body=f"Your request {instance.tracking_code} is live.",
                 recipient=instance.requester_email,
                 related_request=instance,
-                use_ai_enhance=True
+                use_ai_enhance=False,
+                deliver_email=False,
             )
+            if instance.target_email:
+                send_notification(
+                    subject="You received a new request",
+                    body=f"A new request {instance.tracking_code} is waiting for your reply.",
+                    recipient=instance.target_email,
+                    related_request=instance,
+                    use_ai_enhance=False,
+                    deliver_email=False,
+                )
         except Exception as e:
             print(f"Error sending initial notification: {e}")
 

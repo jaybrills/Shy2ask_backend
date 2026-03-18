@@ -3,7 +3,7 @@ from django.conf import settings
 from account.emailing import build_email_context, send_templated_email
 
 
-def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True):
+def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True):
     """Send email notification and create notification record. AI makes subject/body short and engaging when OPENAI_API_KEY set."""
     if not recipient:
         return
@@ -17,24 +17,25 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
         except Exception:
             pass
     tracking_code = getattr(related_request, "tracking_code", "")
-    send_templated_email(
-        subject=subject,
-        recipient=recipient,
-        text_template="emails/notification.txt",
-        html_template="emails/notification.html",
-        context=build_email_context(
-            preheader=subject,
-            headline=subject,
-            intro="You have a new update from Shy2Ask.com.",
-            body=body,
-            tracking_code=tracking_code,
-            requester_name=getattr(related_request, "requester_display_name", "") if related_request else "",
-            target_name=getattr(related_request, "target_display_name", "") if related_request else "",
-            cta_url=f"https://backend.shy2ask.com/api/requests/{related_request.id}/conversation/" if related_request else "https://backend.shy2ask.com/docs",
-            cta_label="Open conversation" if related_request else "Open docs",
-            footer_note="You are receiving this notification because activity occurred on a request connected to your account.",
-        ),
-    )
+    if deliver_email:
+        send_templated_email(
+            subject=subject,
+            recipient=recipient,
+            text_template="emails/notification.txt",
+            html_template="emails/notification.html",
+            context=build_email_context(
+                preheader=subject,
+                headline=subject,
+                intro="You have a new update from Shy2Ask.com.",
+                body=body,
+                tracking_code=tracking_code,
+                requester_name=getattr(related_request, "requester_display_name", "") if related_request else "",
+                target_name=getattr(related_request, "target_display_name", "") if related_request else "",
+                cta_url=f"https://backend.shy2ask.com/api/requests/{related_request.id}/conversation/" if related_request else "https://backend.shy2ask.com/docs",
+                cta_label="Open conversation" if related_request else "Open docs",
+                footer_note="You are receiving this notification because activity occurred on a request connected to your account.",
+            ),
+        )
     from .models import Notification
     from .websocket_utils import send_notification_websocket
 

@@ -72,6 +72,31 @@ class ChatEndpointCoverageTest(TestCase):
         slashless_list = self.client.get("/api/requests", **self.auth_headers(self.owner_token))
         self.assertEqual(slashless_list.status_code, 200)
 
+    @patch("chat.emailing.send_templated_email")
+    def test_request_create_sends_html_emails_to_requester_and_target(self, mock_send_email):
+        response = self.client.post(
+            "/api/requests/",
+            {
+                "requester_name": "Another Requester",
+                "requester_email": self.owner.email,
+                "target_name": "Unregistered Target",
+                "target_email": "later-user@valid.com",
+                "description": "Another description",
+            },
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(mock_send_email.call_count, 2)
+
+        recipients = [call.kwargs["recipient"] for call in mock_send_email.call_args_list]
+        self.assertEqual(recipients, [self.owner.email, "later-user@valid.com"])
+        self.assertTrue(all(call.kwargs["html_template"] == "emails/request_update.html" for call in mock_send_email.call_args_list))
+        self.assertTrue(all(call.kwargs["text_template"] == "emails/request_update.txt" for call in mock_send_email.call_args_list))
+        self.assertIn(response.data["tracking_code"], mock_send_email.call_args_list[0].kwargs["subject"])
+        self.assertEqual(mock_send_email.call_args_list[1].kwargs["context"]["target_name"], "Unregistered Target")
+
     def test_request_conversation_and_message_endpoints(self):
         conversation = self.client.get(
             f"/api/requests/{self.request.id}/conversation/",
@@ -129,6 +154,23 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertIn("messages", by_tracking.data)
         self.assertGreaterEqual(len(by_tracking.data["messages"]), 2)
         self.assertEqual(by_tracking.data["viewer"]["role"], Message.Actor.TARGET)
+
+    @patch("chat.emailing.send_templated_email")
+    def test_reply_sends_html_emails_to_both_participants(self, mock_send_email):
+        reply = self.client.post(
+            "/api/requests/reply/",
+            {"tracking_code": self.request.tracking_code, "body": "Reply using tracking"},
+            format="json",
+        )
+
+        self.assertEqual(reply.status_code, 201)
+        self.assertEqual(mock_send_email.call_count, 2)
+
+        recipients = [call.kwargs["recipient"] for call in mock_send_email.call_args_list]
+        self.assertEqual(recipients, [self.owner.email, self.target.email])
+        self.assertEqual(mock_send_email.call_args_list[0].kwargs["context"]["message_body"], "Reply using tracking")
+        self.assertEqual(mock_send_email.call_args_list[1].kwargs["context"]["message_label"], "Your message")
+        self.assertTrue(all(call.kwargs["html_template"] == "emails/request_update.html" for call in mock_send_email.call_args_list))
 
     def test_unreplied_requests_endpoint_only_returns_requests_without_target_reply(self):
         unreplied_request = self.request
