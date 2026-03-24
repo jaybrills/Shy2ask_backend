@@ -95,7 +95,10 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertTrue(all(call.kwargs["html_template"] == "emails/request_update.html" for call in mock_send_email.call_args_list))
         self.assertTrue(all(call.kwargs["text_template"] == "emails/request_update.txt" for call in mock_send_email.call_args_list))
         self.assertIn(response.data["tracking_code"], mock_send_email.call_args_list[0].kwargs["subject"])
-        self.assertEqual(mock_send_email.call_args_list[1].kwargs["context"]["target_name"], "Unregistered Target")
+        self.assertNotIn("requester_name", mock_send_email.call_args_list[1].kwargs["context"])
+        self.assertNotIn("requester_email", mock_send_email.call_args_list[1].kwargs["context"])
+        self.assertNotIn("target_name", mock_send_email.call_args_list[1].kwargs["context"])
+        self.assertNotIn("target_email", mock_send_email.call_args_list[1].kwargs["context"])
 
     def test_request_conversation_and_message_endpoints(self):
         conversation = self.client.get(

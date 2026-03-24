@@ -1,8 +1,10 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .message_service import resolve_display_name, resolve_recipient_name
 from .models import Attachment, Message, ShyRequest, user_display_name_for
+from .utils import censor_text
 
 
 User = get_user_model()
@@ -182,6 +184,10 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"requester_name": "Requester name is required."})
         if not attrs.get("requester_email") and not attrs.get("requester_user"):
             raise serializers.ValidationError({"requester_email": "Requester email or requester_user is required."})
+        if attrs.get("description"):
+            _, blocked = censor_text(attrs["description"])
+            if blocked:
+                raise serializers.ValidationError({"description": ["Description contains blocked content."]})
 
         return attrs
 
@@ -193,13 +199,17 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             requester_alias = getattr(user, "alias_name", "") or ""
 
         country_code = validated_data.pop("country_code", None) or self.context.get("country_code", "")
-        shy_request = ShyRequest.objects.create_submission(
-            actor=user,
-            requester_alias=requester_alias,
-            status=ShyRequest.Status.SUBMITTED,
-            country_code=country_code,
-            **validated_data,
-        )
+        try:
+            shy_request = ShyRequest.objects.create_submission(
+                actor=user,
+                requester_alias=requester_alias,
+                status=ShyRequest.Status.SUBMITTED,
+                country_code=country_code,
+                **validated_data,
+            )
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or {"detail": ["Invalid request."]}
+            raise serializers.ValidationError(detail) from exc
         return shy_request
 
 

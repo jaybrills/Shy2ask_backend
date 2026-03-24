@@ -78,6 +78,23 @@ class ShyRequestVerificationTest(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_blocked_request_description_returns_field_error(self):
+        response = self.client.post(
+            "/api/requests/",
+            {
+                "requester_name": "Test User",
+                "requester_email": "test2@example.com",
+                "target_name": "Target User",
+                "target_email": "target2@example.com",
+                "description": "Willst du ein Madchen verkaufen?",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("description", response.data)
+        self.assertEqual(response.data["description"], ["Description contains blocked content."])
+
     def test_messages_endpoint_as_owner_sender_is_requester(self):
         owner = User.objects.create_user(email="owner@shy2ask.com", password="pass12345", is_verified=True)
         shy_request = ShyRequest.objects.create(

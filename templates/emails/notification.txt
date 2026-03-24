@@ -6,8 +6,7 @@
 {{ body }}
 
 {% if tracking_code %}Tracking code: {{ tracking_code }}
-{% endif %}{% if requester_name %}Requester: {{ requester_name }}
-{% endif %}{% if target_name %}Target: {{ target_name }}
+Privacy: Personal identity details are intentionally hidden.
 {% endif %}
 Open: {{ cta_url }}
 

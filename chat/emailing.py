@@ -46,10 +46,6 @@ def _send_request_email(
             recipient_name=recipient_name or recipient_role_label,
             recipient_role_label=recipient_role_label,
             tracking_code=shy_request.tracking_code,
-            requester_name=shy_request.requester_display_name,
-            requester_email=shy_request.requester_email,
-            target_name=shy_request.target_display_name,
-            target_email=shy_request.target_email,
             request_description=shy_request.description,
             service_channel=shy_request.get_service_channel_display(),
             status_label=shy_request.get_status_display(),
@@ -83,7 +79,7 @@ def send_request_created_emails(shy_request: ShyRequest) -> None:
         recipient=shy_request.target_email,
         recipient_name=shy_request.target_display_name,
         recipient_role_label="Target",
-        subject=f"New request from {shy_request.requester_display_name}",
+        subject="A new private request is waiting for you",
         headline="A new request is waiting for you",
         intro="Someone used Shy2Ask to contact you privately. You can review the request and reply from the secure conversation page.",
         summary_title="Why you received this",
@@ -96,14 +92,12 @@ def send_request_created_emails(shy_request: ShyRequest) -> None:
 def send_request_reply_emails(shy_request: ShyRequest, sender: str, body: str) -> None:
     clean_body = (body or "").strip()
     if sender == Message.Actor.TARGET:
-        sender_name = shy_request.target_display_name
         recipient_subject = f"New reply on request {shy_request.tracking_code}"
         recipient_headline = "You received a new reply"
         recipient_intro = "The target has replied to your request on Shy2Ask."
         recipient_summary = "Open the conversation to read the latest reply and continue the discussion."
     else:
-        sender_name = shy_request.requester_display_name
-        recipient_subject = f"New message from {shy_request.requester_display_name}"
+        recipient_subject = f"New message on request {shy_request.tracking_code}"
         recipient_headline = "You received a new message"
         recipient_intro = "The requester sent a new message on Shy2Ask."
         recipient_summary = "Open the conversation to read the latest message and send your reply."
@@ -121,7 +115,7 @@ def send_request_reply_emails(shy_request: ShyRequest, sender: str, body: str) -
         cta_label="Open conversation",
         role=Message.Actor.REQUESTER if sender == Message.Actor.TARGET else Message.Actor.TARGET,
         message_body=clean_body,
-        message_label=f"Message from {sender_name}",
+        message_label="Latest message",
     )
 
     _send_request_email(
