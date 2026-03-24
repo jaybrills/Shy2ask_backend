@@ -29,8 +29,6 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
                 intro="You have a new update from Shy2Ask.com.",
                 body=body,
                 tracking_code=tracking_code,
-                cta_url=f"https://backend.shy2ask.com/api/requests/{related_request.id}/conversation/" if related_request else "https://backend.shy2ask.com/docs",
-                cta_label="Open conversation" if related_request else "Open docs",
                 footer_note="You are receiving this notification because activity occurred on a request connected to your account.",
             ),
         )

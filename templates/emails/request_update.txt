@@ -19,9 +19,8 @@ Privacy: Personal identity details are intentionally hidden.
 {% endif %}Original request:
 {{ request_description }}
 
-Shy2Ask keeps the sender's personal identity private in email communication.
-
-Open: {{ cta_url }}
+Shy2Ask keeps personal identity private in email communication.
+Follow-up actions will open directly in the app once the in-app flow is connected.
 
 {{ footer_note }}
 Support: {{ support_email }}

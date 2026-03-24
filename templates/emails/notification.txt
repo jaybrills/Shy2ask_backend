@@ -8,7 +8,7 @@
 {% if tracking_code %}Tracking code: {{ tracking_code }}
 Privacy: Personal identity details are intentionally hidden.
 {% endif %}
-Open: {{ cta_url }}
+This update is for awareness only. App actions will be connected later inside the Shy2Ask experience.
 
 {{ footer_note }}
 Support: {{ support_email }}
