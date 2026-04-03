@@ -134,6 +134,39 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
 
         return matched == len(alias_tokens)
 
+    @classmethod
+    def _compact_alias_matches_name_tokens(cls, alias, name_tokens):
+        if not alias or len(name_tokens) < 2:
+            return False
+
+        normalized_tokens = [cls._normalize_name_for_comparison(token) for token in name_tokens if token]
+        if len(normalized_tokens) < 2:
+            return False
+
+        min_prefix_len = 3
+        split_count = len(normalized_tokens) - 1
+
+        def search(start_index, token_index):
+            current_token = normalized_tokens[token_index]
+            remaining_tokens = len(normalized_tokens) - token_index - 1
+
+            min_end = start_index + min_prefix_len
+            max_end = len(alias) - (remaining_tokens * min_prefix_len)
+            if token_index == len(normalized_tokens) - 1:
+                piece = alias[start_index:]
+                return bool(piece) and (
+                    current_token.startswith(piece) or cls._is_strict_name_match(piece, current_token)
+                )
+
+            for end_index in range(min_end, max_end + 1):
+                piece = alias[start_index:end_index]
+                if current_token.startswith(piece) or cls._is_strict_name_match(piece, current_token):
+                    if search(end_index, token_index + 1):
+                        return True
+            return False
+
+        return len(alias) >= (len(normalized_tokens) * min_prefix_len) and search(0, 0)
+
     def _alias_matches_real_name(self):
         raw_alias = (self.alias_name or "").strip()
         alias = self._normalize_name_for_comparison(self.alias_name)
@@ -157,7 +190,11 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             self._tokenize_name(self.last_name),
             self._tokenize_name(f"{self.first_name} {self.last_name}"),
         ]
-        return any(self._tokens_match_real_name(alias_tokens, tokens) for tokens in token_candidates)
+        return any(
+            self._tokens_match_real_name(alias_tokens, tokens)
+            or self._compact_alias_matches_name_tokens(alias, tokens)
+            for tokens in token_candidates
+        )
 
     def __str__(self):
         if self.alias_name:
