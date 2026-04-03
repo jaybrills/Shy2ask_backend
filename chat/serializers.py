@@ -113,6 +113,8 @@ class MessageSerializer(serializers.ModelSerializer):
 class ShyRequestSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)
     direction = serializers.SerializerMethodField()
+    is_sent = serializers.SerializerMethodField()
+    is_received = serializers.SerializerMethodField()
     requester_user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         required=False,
@@ -151,6 +153,8 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "country_code",
             "status",
             "direction",
+            "is_sent",
+            "is_received",
             "created_at",
             "attachments",
         ]
@@ -162,6 +166,8 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "status",
             "country_code",
             "direction",
+            "is_sent",
+            "is_received",
             "created_at",
             "attachments",
         ]
@@ -181,6 +187,12 @@ class ShyRequestSerializer(serializers.ModelSerializer):
         if obj.requester_email and getattr(user, "email", "").lower() == obj.requester_email.lower():
             return "sent"
         return None
+
+    def get_is_sent(self, obj):
+        return self.get_direction(obj) == "sent"
+
+    def get_is_received(self, obj):
+        return self.get_direction(obj) == "received"
 
     def validate(self, attrs):
         request = self.context["request"]

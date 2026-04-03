@@ -62,6 +62,8 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertGreaterEqual(len(list_response.data), 1)
         self.assertEqual(list_response.data[0]["direction"], "sent")
+        self.assertTrue(list_response.data[0]["is_sent"])
+        self.assertFalse(list_response.data[0]["is_received"])
 
         retrieve_response = self.client.get(
             f"/api/requests/{self.request.id}/",
@@ -79,6 +81,8 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["direction"], "received")
+        self.assertFalse(response.data[0]["is_sent"])
+        self.assertTrue(response.data[0]["is_received"])
 
     @patch("chat.emailing.send_templated_email")
     def test_request_create_sends_html_emails_to_requester_and_target(self, mock_send_email):
