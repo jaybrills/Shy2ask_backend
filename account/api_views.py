@@ -295,6 +295,27 @@ class CheckEmailView(GenericAPIView):
         return Response({"is_available": True, "message": "Email is available."})
 
 
+class UserNameByEmailView(GenericAPIView):
+    serializer_class = EmailSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        try:
+            validate_disposable_email(email)
+        except ValidationError as exc:
+            return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.find_by_email(email)
+        if not user:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"first_name": user.first_name, "last_name": user.last_name})
+
+
 class ProfileMeView(RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
     permission_classes = [permissions.IsAuthenticated]

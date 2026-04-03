@@ -201,6 +201,26 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["is_available"])
 
+    def test_user_name_by_email_returns_first_and_last_name(self):
+        response = self.client.post(
+            "/auth/user-name",
+            data=json.dumps({"email": self.user.email}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"first_name": "Owner", "last_name": "User"})
+
+    def test_user_name_by_email_returns_404_for_unknown_email(self):
+        response = self.client.post(
+            "/auth/user-name",
+            data=json.dumps({"email": "missing@valid.com"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "User not found.")
+
     def test_profile_me_get_and_patch(self):
         get_response = self.client.get("/profile/me", **self.auth_headers(self.user_token))
         self.assertEqual(get_response.status_code, 200)

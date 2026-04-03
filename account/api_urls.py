@@ -8,6 +8,7 @@ from .api_views import (
     RegisterView,
     ResendVerificationView,
     ResetPasswordView,
+    UserNameByEmailView,
     UserListView,
     VerifyEmailView,
 )
@@ -28,6 +29,8 @@ urlpatterns = [
     path("auth/resend-verification/", ResendVerificationView.as_view()),
     path("auth/check-email", CheckEmailView.as_view()),
     path("auth/check-email/", CheckEmailView.as_view()),
+    path("auth/user-name", UserNameByEmailView.as_view()),
+    path("auth/user-name/", UserNameByEmailView.as_view()),
     path("profile/me", ProfileMeView.as_view()),
     path("profile/me/", ProfileMeView.as_view()),
     path("profile/users", UserListView.as_view()),
