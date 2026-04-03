@@ -5,6 +5,7 @@ from django.test import Client, TestCase
 from rest_framework.authtoken.models import Token
 
 from account.models import User
+from chat.models import ShyRequest
 
 
 class AccountEndpointCoverageTest(TestCase):
@@ -211,15 +212,40 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"first_name": "Owner", "last_name": "User"})
 
-    def test_user_name_by_email_returns_404_for_unknown_email(self):
+    def test_user_name_by_email_returns_first_target_name_for_unregistered_email(self):
+        ShyRequest.objects.create(
+            requester_name="Requester",
+            requester_email="requester@valid.com",
+            target_name="First Mentioned Name",
+            target_email="missing@valid.com",
+            description="First request",
+        )
+        ShyRequest.objects.create(
+            requester_name="Requester",
+            requester_email="requester2@valid.com",
+            target_name="Later Mentioned Name",
+            target_email="missing@valid.com",
+            description="Second request",
+        )
+
         response = self.client.post(
             "/auth/user-name",
             data=json.dumps({"email": "missing@valid.com"}),
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["detail"], "User not found.")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"first_name": "First Mentioned Name", "last_name": None})
+
+    def test_user_name_by_email_returns_nulls_when_no_user_or_request_exists(self):
+        response = self.client.post(
+            "/auth/user-name",
+            data=json.dumps({"email": "never-seen@valid.com"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"first_name": None, "last_name": None})
 
     def test_profile_me_get_and_patch(self):
         get_response = self.client.get("/profile/me", **self.auth_headers(self.user_token))

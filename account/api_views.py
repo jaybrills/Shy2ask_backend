@@ -8,6 +8,8 @@ from rest_framework.generics import GenericAPIView, ListAPIView, RetrieveUpdateA
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from chat.models import ShyRequest
+
 from .models import ActiveUser, PendingVerificationUser, User
 from .services import (
     create_and_send_reset_otp,
@@ -310,10 +312,19 @@ class UserNameByEmailView(GenericAPIView):
             return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.find_by_email(email)
-        if not user:
-            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        if user:
+            return Response({"first_name": user.first_name, "last_name": user.last_name})
 
-        return Response({"first_name": user.first_name, "last_name": user.last_name})
+        first_request = (
+            ShyRequest.objects.filter(target_email__iexact=email)
+            .exclude(target_name="")
+            .order_by("created_at")
+            .first()
+        )
+        if first_request:
+            return Response({"first_name": first_request.target_name, "last_name": None})
+
+        return Response({"first_name": None, "last_name": None})
 
 
 class ProfileMeView(RetrieveUpdateAPIView):
