@@ -57,6 +57,18 @@ class UserModelTest(TestCase):
 
         self.assertIn("alias_name", exc.exception.message_dict)
 
+    def test_alias_name_cannot_be_split_shortened_parts_of_real_name(self):
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="alias-split@valid.com",
+                password="password123",
+                first_name="Khajan",
+                last_name="Singh",
+                alias_name="Kha sin",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
+
 class OTPModelTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(email="user@valid.com", password="password")

@@ -1,10 +1,10 @@
 import re
-from difflib import SequenceMatcher
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from fuzzywuzzy import fuzz
 
 from .managers import OTPManager, UserManager
 from .validators import validate_phone_number, validate_disposable_email
@@ -93,6 +93,10 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
 
     @staticmethod
+    def _tokenize_name(value):
+        return [part for part in re.split(r'[^a-z0-9]+', (value or '').lower()) if part]
+
+    @staticmethod
     def _is_strict_name_match(alias, candidate):
         if not alias or not candidate:
             return False
@@ -106,9 +110,32 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         if len(candidate) >= 4 and candidate in alias:
             return True
 
-        return SequenceMatcher(None, alias, candidate).ratio() >= 0.8
+        return (
+            fuzz.ratio(alias, candidate) >= 80
+            or fuzz.partial_ratio(alias, candidate) >= 90
+            or fuzz.token_sort_ratio(alias, candidate) >= 85
+        )
+
+    @classmethod
+    def _tokens_match_real_name(cls, alias_tokens, name_tokens):
+        if not alias_tokens or not name_tokens or len(alias_tokens) > len(name_tokens):
+            return False
+
+        matched = 0
+        for alias_token, name_token in zip(alias_tokens, name_tokens):
+            if alias_token == name_token:
+                matched += 1
+                continue
+            if len(alias_token) >= 3 and name_token.startswith(alias_token):
+                matched += 1
+                continue
+            if cls._is_strict_name_match(alias_token, name_token):
+                matched += 1
+
+        return matched == len(alias_tokens)
 
     def _alias_matches_real_name(self):
+        raw_alias = (self.alias_name or "").strip()
         alias = self._normalize_name_for_comparison(self.alias_name)
         if not alias:
             return False
@@ -123,7 +150,14 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         for candidate in candidates:
             if self._is_strict_name_match(alias, candidate):
                 return True
-        return False
+
+        alias_tokens = self._tokenize_name(raw_alias)
+        token_candidates = [
+            self._tokenize_name(self.first_name),
+            self._tokenize_name(self.last_name),
+            self._tokenize_name(f"{self.first_name} {self.last_name}"),
+        ]
+        return any(self._tokens_match_real_name(alias_tokens, tokens) for tokens in token_candidates)
 
     def __str__(self):
         if self.alias_name:
