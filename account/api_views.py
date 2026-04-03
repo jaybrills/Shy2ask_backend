@@ -312,7 +312,10 @@ class ProfileMeView(RetrieveUpdateAPIView):
     def patch(self, request, *args, **kwargs):
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except ValidationError as exc:
+            return Response({"detail": getattr(exc, "message_dict", exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ProfileSerializer(self.get_object()).data)
 
 

@@ -216,6 +216,17 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertEqual(patch_response.json()["first_name"], "Updated")
         self.assertEqual(patch_response.json()["alias_name"], "alias-updated")
 
+    def test_profile_patch_rejects_alias_similar_to_real_name(self):
+        response = self.client.patch(
+            "/profile/me",
+            data=json.dumps({"alias_name": "Owner User"}),
+            content_type="application/json",
+            **self.auth_headers(self.user_token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("alias_name", response.json()["detail"])
+
     def test_profile_users_requires_staff_and_supports_search(self):
         forbidden = self.client.get("/profile/users", **self.auth_headers(self.user_token))
         self.assertEqual(forbidden.status_code, 403)

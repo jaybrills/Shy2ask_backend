@@ -1,6 +1,8 @@
 import re
+from difflib import SequenceMatcher
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -86,6 +88,29 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         db_table = 'account_user'
         ordering = ['-date_joined']
 
+    @staticmethod
+    def _normalize_name_for_comparison(value):
+        return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
+
+    def _alias_matches_real_name(self):
+        alias = self._normalize_name_for_comparison(self.alias_name)
+        if not alias:
+            return False
+
+        candidates = {
+            self._normalize_name_for_comparison(self.first_name),
+            self._normalize_name_for_comparison(self.last_name),
+            self._normalize_name_for_comparison(f"{self.first_name} {self.last_name}"),
+        }
+        candidates.discard("")
+
+        for candidate in candidates:
+            if alias == candidate:
+                return True
+            if SequenceMatcher(None, alias, candidate).ratio() >= 0.85:
+                return True
+        return False
+
     def __str__(self):
         if self.alias_name:
             return f"{self.alias_name} ({self.email})"
@@ -107,6 +132,11 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     def clean(self):
         super().clean()
         self.email = self.__class__.objects.normalize_email(self.email).lower()
+
+        if self._alias_matches_real_name():
+            raise ValidationError(
+                {"alias_name": _("Alias name cannot closely match your first or last name.")}
+            )
         
         # Normalize phone number format (validator already checked validity)
         if self.phone_number:

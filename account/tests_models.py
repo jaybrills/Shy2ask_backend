@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import timedelta
 from account.models import ActiveUser, EmailVerificationOTP, PasswordResetOTP, PendingVerificationUser, User
@@ -31,6 +32,18 @@ class UserModelTest(TestCase):
         self.assertIn(active_verified, ActiveUser.objects.active())
         self.assertNotIn(inactive, ActiveUser.objects.active())
         self.assertIn(pending, PendingVerificationUser.objects.unverified())
+
+    def test_alias_name_cannot_closely_match_real_name(self):
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="alias-conflict@valid.com",
+                password="password123",
+                first_name="John",
+                last_name="Doe",
+                alias_name="Jon Doe",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
 
 class OTPModelTest(TestCase):
     def setUp(self):
