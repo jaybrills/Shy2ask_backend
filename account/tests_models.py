@@ -45,6 +45,18 @@ class UserModelTest(TestCase):
 
         self.assertIn("alias_name", exc.exception.message_dict)
 
+    def test_alias_name_cannot_be_shortened_version_of_real_name(self):
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="alias-shortened@valid.com",
+                password="password123",
+                first_name="Khajan",
+                last_name="Smith",
+                alias_name="Khaj",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
+
 class OTPModelTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(email="user@valid.com", password="password")

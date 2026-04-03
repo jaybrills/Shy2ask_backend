@@ -92,6 +92,22 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     def _normalize_name_for_comparison(value):
         return re.sub(r'[^a-z0-9]+', '', (value or '').lower())
 
+    @staticmethod
+    def _is_strict_name_match(alias, candidate):
+        if not alias or not candidate:
+            return False
+
+        if alias == candidate:
+            return True
+
+        # Reject strong partial matches like "khaj" vs "khajan".
+        if len(alias) >= 4 and alias in candidate:
+            return True
+        if len(candidate) >= 4 and candidate in alias:
+            return True
+
+        return SequenceMatcher(None, alias, candidate).ratio() >= 0.8
+
     def _alias_matches_real_name(self):
         alias = self._normalize_name_for_comparison(self.alias_name)
         if not alias:
@@ -105,9 +121,7 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         candidates.discard("")
 
         for candidate in candidates:
-            if alias == candidate:
-                return True
-            if SequenceMatcher(None, alias, candidate).ratio() >= 0.85:
+            if self._is_strict_name_match(alias, candidate):
                 return True
         return False
 
