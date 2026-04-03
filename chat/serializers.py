@@ -112,6 +112,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
 class ShyRequestSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)
+    direction = serializers.SerializerMethodField()
     requester_user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         required=False,
@@ -149,6 +150,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "quoted_price_chf",
             "country_code",
             "status",
+            "direction",
             "created_at",
             "attachments",
         ]
@@ -159,9 +161,26 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "quoted_price_chf",
             "status",
             "country_code",
+            "direction",
             "created_at",
             "attachments",
         ]
+
+    def get_direction(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return None
+
+        if user.id in {obj.user_id, obj.requester_user_id}:
+            return "sent"
+        if user.id == obj.target_user_id:
+            return "received"
+        if obj.target_email and getattr(user, "email", "").lower() == obj.target_email.lower():
+            return "received"
+        if obj.requester_email and getattr(user, "email", "").lower() == obj.requester_email.lower():
+            return "sent"
+        return None
 
     def validate(self, attrs):
         request = self.context["request"]

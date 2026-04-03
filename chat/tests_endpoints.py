@@ -61,6 +61,7 @@ class ChatEndpointCoverageTest(TestCase):
         list_response = self.client.get("/api/requests/", **self.auth_headers(self.owner_token))
         self.assertEqual(list_response.status_code, 200)
         self.assertGreaterEqual(len(list_response.data), 1)
+        self.assertEqual(list_response.data[0]["direction"], "sent")
 
         retrieve_response = self.client.get(
             f"/api/requests/{self.request.id}/",
@@ -71,6 +72,13 @@ class ChatEndpointCoverageTest(TestCase):
 
         slashless_list = self.client.get("/api/requests", **self.auth_headers(self.owner_token))
         self.assertEqual(slashless_list.status_code, 200)
+
+    def test_requests_list_marks_received_requests_for_target(self):
+        response = self.client.get("/api/requests/", **self.auth_headers(self.target_token))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["direction"], "received")
 
     @patch("chat.emailing.send_templated_email")
     def test_request_create_sends_html_emails_to_requester_and_target(self, mock_send_email):
