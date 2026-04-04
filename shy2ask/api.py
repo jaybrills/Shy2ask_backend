@@ -35,6 +35,7 @@ class ApiIndexView(APIView):
                     "forgot_password": f"{base}/api/auth/forgot-password",
                     "reset_password": f"{base}/api/auth/reset-password",
                     "check_email": f"{base}/api/auth/check-email",
+                    "check_alias": f"{base}/api/auth/check-alias",
                 },
                 "profile": {
                     "me": f"{base}/api/profile/me",

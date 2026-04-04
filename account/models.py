@@ -1,11 +1,13 @@
 import re
+from difflib import SequenceMatcher
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
-from fuzzywuzzy import fuzz
 
+from .alias_utils import generate_alias_suggestions, generate_unique_alias_name, normalize_alias_name
 from .managers import OTPManager, UserManager
 from .validators import validate_phone_number, validate_disposable_email
 
@@ -47,7 +49,11 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     
     first_name = models.CharField(_('first name'), max_length=150, blank=True)
     last_name = models.CharField(_('last name'), max_length=150, blank=True)
-    alias_name = models.CharField(_('alias name'), max_length=150, blank=True, help_text=_('Optional display name or nickname.'))
+    alias_name = models.CharField(
+        _('alias name'),
+        max_length=150,
+        help_text=_('Unique display name or nickname. Auto-generated when omitted.'),
+    )
     phone_number = models.CharField(
         _('phone number'),
         max_length=20,
@@ -87,6 +93,9 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         verbose_name_plural = _('users')
         db_table = 'account_user'
         ordering = ['-date_joined']
+        constraints = [
+            models.UniqueConstraint(Lower("alias_name"), name="account_user_alias_name_ci_unique"),
+        ]
 
     @staticmethod
     def _normalize_name_for_comparison(value):
@@ -95,6 +104,33 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     @staticmethod
     def _tokenize_name(value):
         return [part for part in re.split(r'[^a-z0-9]+', (value or '').lower()) if part]
+
+    @staticmethod
+    def _ratio(left, right):
+        return int(SequenceMatcher(None, left, right).ratio() * 100)
+
+    @classmethod
+    def _partial_ratio(cls, left, right):
+        if not left or not right:
+            return 0
+
+        shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+        if shorter == longer:
+            return 100
+
+        window = len(shorter)
+        best = 0
+        for start in range(0, len(longer) - window + 1):
+            best = max(best, cls._ratio(shorter, longer[start : start + window]))
+            if best == 100:
+                return best
+        return best
+
+    @classmethod
+    def _token_sort_ratio(cls, left, right):
+        left_tokens = " ".join(sorted(cls._tokenize_name(left)))
+        right_tokens = " ".join(sorted(cls._tokenize_name(right)))
+        return cls._ratio(left_tokens, right_tokens)
 
     @staticmethod
     def _is_strict_name_match(alias, candidate):
@@ -111,9 +147,9 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             return True
 
         return (
-            fuzz.ratio(alias, candidate) >= 80
-            or fuzz.partial_ratio(alias, candidate) >= 90
-            or fuzz.token_sort_ratio(alias, candidate) >= 85
+            User._ratio(alias, candidate) >= 80
+            or User._partial_ratio(alias, candidate) >= 90
+            or User._token_sort_ratio(alias, candidate) >= 85
         )
 
     @classmethod
@@ -168,7 +204,7 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         return len(alias) >= (len(normalized_tokens) * min_prefix_len) and search(0, 0)
 
     def _alias_matches_real_name(self):
-        raw_alias = (self.alias_name or "").strip()
+        raw_alias = normalize_alias_name(self.alias_name)
         alias = self._normalize_name_for_comparison(self.alias_name)
         if not alias:
             return False
@@ -196,6 +232,59 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             for tokens in token_candidates
         )
 
+    @classmethod
+    def alias_exists(cls, alias_name, exclude_pk=None):
+        alias_name = normalize_alias_name(alias_name)
+        if not alias_name:
+            return False
+
+        queryset = cls.objects.filter(alias_name__iexact=alias_name)
+        if exclude_pk is not None:
+            queryset = queryset.exclude(pk=exclude_pk)
+        return queryset.exists()
+
+    @classmethod
+    def is_alias_invalid_for_name(cls, alias_name, first_name="", last_name=""):
+        candidate = normalize_alias_name(alias_name)
+        if not candidate:
+            return False
+        return cls(first_name=first_name, last_name=last_name, alias_name=candidate)._alias_matches_real_name()
+
+    @classmethod
+    def generate_unique_alias(cls, first_name="", last_name="", exclude_pk=None, reserved_aliases=None):
+        return generate_unique_alias_name(
+            alias_exists=lambda alias: cls.alias_exists(alias, exclude_pk=exclude_pk),
+            is_invalid_alias=lambda alias: cls.is_alias_invalid_for_name(
+                alias,
+                first_name=first_name,
+                last_name=last_name,
+            ),
+            reserved_aliases=reserved_aliases,
+        )
+
+    @classmethod
+    def alias_suggestions(cls, first_name="", last_name="", exclude_pk=None, count=3):
+        return generate_alias_suggestions(
+            count=count,
+            alias_exists=lambda alias: cls.alias_exists(alias, exclude_pk=exclude_pk),
+            is_invalid_alias=lambda alias: cls.is_alias_invalid_for_name(
+                alias,
+                first_name=first_name,
+                last_name=last_name,
+            ),
+        )
+
+    @classmethod
+    def get_alias_availability(cls, alias_name, first_name="", last_name="", exclude_pk=None):
+        normalized_alias = normalize_alias_name(alias_name)
+        if not normalized_alias:
+            return False, _("Alias name is required.")
+        if cls.is_alias_invalid_for_name(normalized_alias, first_name=first_name, last_name=last_name):
+            return False, _("Alias name cannot closely match your first or last name.")
+        if cls.alias_exists(normalized_alias, exclude_pk=exclude_pk):
+            return False, _("This alias name is already taken.")
+        return True, _("Alias name is available.")
+
     def __str__(self):
         if self.alias_name:
             return f"{self.alias_name} ({self.email})"
@@ -217,10 +306,15 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
     def clean(self):
         super().clean()
         self.email = self.__class__.objects.normalize_email(self.email).lower()
+        self.alias_name = normalize_alias_name(self.alias_name)
 
         if self._alias_matches_real_name():
             raise ValidationError(
                 {"alias_name": _("Alias name cannot closely match your first or last name.")}
+            )
+        if self.alias_exists(self.alias_name, exclude_pk=self.pk):
+            raise ValidationError(
+                {"alias_name": _("This alias name is already taken.")}
             )
         
         # Normalize phone number format (validator already checked validity)
@@ -233,6 +327,17 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             self.phone_number = cleaned
 
     def save(self, *args, **kwargs):
+        generated_alias = False
+        self.alias_name = normalize_alias_name(self.alias_name)
+        if not self.alias_name:
+            self.alias_name = self.__class__.generate_unique_alias(
+                first_name=self.first_name,
+                last_name=self.last_name,
+                exclude_pk=self.pk,
+            )
+            generated_alias = True
+        if generated_alias and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | {"alias_name"}
         self.full_clean()
         super().save(*args, **kwargs)
 

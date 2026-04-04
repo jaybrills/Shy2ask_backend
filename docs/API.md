@@ -22,6 +22,7 @@ All Ninja endpoints are under the base URL (no `/api/` prefix). Auth uses **Bear
 | POST | `/auth/login` | No | Login (email verified only); returns token |
 | POST | `/auth/forgot-password` | No | Send password-reset OTP to email |
 | POST | `/auth/reset-password` | No | Reset password with OTP |
+| POST | `/auth/check-alias` | No | Check whether an alias is available and not too close to a real name |
 
 #### POST `/auth/register`
 
@@ -36,7 +37,7 @@ All Ninja endpoints are under the base URL (no `/api/` prefix). Auth uses **Bear
   "phone_number": "+41..."
 }
 ```
-All except `email` and `password` are optional.
+All except `email` and `password` are optional. If `alias_name` is omitted or blank, the backend assigns a random unique alias automatically.
 
 **Response:** `201 Created`
 ```json
@@ -157,6 +158,31 @@ All except `email` and `password` are optional.
 
 **Response:** `200 OK` – `{"message": "Password has been reset. You can now log in."}`  
 **Errors:** `400` – invalid/expired OTP or password too short.
+
+---
+
+#### POST `/auth/check-alias`
+
+**Request body (JSON):**
+```json
+{
+  "alias_name": "QuietRiver4321",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+`first_name` and `last_name` are optional, but recommended when checking availability during signup so the API can reject aliases that closely resemble the real name.
+
+**Response:** `200 OK`
+```json
+{
+  "is_available": true,
+  "alias_name": "QuietRiver4321",
+  "message": "Alias name is available."
+}
+```
+
+If unavailable, the response also includes `suggestions` with random unique alternatives.
 
 ---
 

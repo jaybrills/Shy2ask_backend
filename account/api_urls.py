@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .api_views import (
+    CheckAliasView,
     CheckEmailView,
     ForgotPasswordView,
     LoginView,
@@ -29,6 +30,8 @@ urlpatterns = [
     path("auth/resend-verification/", ResendVerificationView.as_view()),
     path("auth/check-email", CheckEmailView.as_view()),
     path("auth/check-email/", CheckEmailView.as_view()),
+    path("auth/check-alias", CheckAliasView.as_view()),
+    path("auth/check-alias/", CheckAliasView.as_view()),
     path("auth/user-name", UserNameByEmailView.as_view()),
     path("auth/user-name/", UserNameByEmailView.as_view()),
     path("profile/me", ProfileMeView.as_view()),

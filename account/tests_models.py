@@ -16,12 +16,38 @@ class UserModelTest(TestCase):
         self.assertTrue(user.check_password("password123"))
         self.assertEqual(user.get_full_name(), "Test User")
         self.assertFalse(user.is_verified)
+        self.assertTrue(user.alias_name)
 
     def test_user_str(self):
         user = User.objects.create_user(email="test@valid.com", password="password")
-        self.assertEqual(str(user), "test@valid.com (test@valid.com)")
+        self.assertEqual(str(user), f"{user.alias_name} (test@valid.com)")
         user.alias_name = "Tester"
+        user.full_clean()
         self.assertEqual(str(user), "Tester (test@valid.com)")
+
+    def test_alias_is_auto_generated_when_missing(self):
+        user = User.objects.create_user(email="generated@valid.com", password="password123")
+
+        self.assertTrue(user.alias_name)
+        self.assertRegex(user.alias_name, r"^[A-Za-z]+[A-Za-z]+\d{4}$")
+
+    def test_alias_generation_is_unique(self):
+        first = User.objects.create_user(email="first@valid.com", password="password123")
+        second = User.objects.create_user(email="second@valid.com", password="password123")
+
+        self.assertNotEqual(first.alias_name.lower(), second.alias_name.lower())
+
+    def test_alias_name_must_be_unique_case_insensitively(self):
+        User.objects.create_user(email="first-alias@valid.com", password="password123", alias_name="ShadowComet1234")
+
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="second-alias@valid.com",
+                password="password123",
+                alias_name="shadowcomet1234",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
 
     def test_user_queryset_helpers_and_proxies(self):
         active_verified = User.objects.create_user(email="active@valid.com", password="password", is_verified=True)

@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from chat.models import ShyRequest
 
+from .alias_utils import normalize_alias_name
 from .models import ActiveUser, PendingVerificationUser, User
 from .services import (
     create_and_send_reset_otp,
@@ -40,6 +41,12 @@ class LoginSerializer(serializers.Serializer):
 
 class EmailSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+
+class AliasAvailabilitySerializer(serializers.Serializer):
+    alias_name = serializers.CharField()
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
 
 
 class VerifyEmailSerializer(serializers.Serializer):
@@ -295,6 +302,51 @@ class CheckEmailView(GenericAPIView):
         if User.objects.by_email(email).exists():
             return Response({"is_available": False, "message": "This email is already registered."})
         return Response({"is_available": True, "message": "Email is available."})
+
+
+class CheckAliasView(GenericAPIView):
+    serializer_class = AliasAvailabilitySerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user = request.user if getattr(request.user, "is_authenticated", False) else None
+        first_name = serializer.validated_data.get("first_name")
+        last_name = serializer.validated_data.get("last_name")
+
+        if current_user:
+            if first_name is None:
+                first_name = current_user.first_name
+            if last_name is None:
+                last_name = current_user.last_name
+
+        exclude_pk = current_user.pk if current_user else None
+        is_available, message = User.get_alias_availability(
+            serializer.validated_data["alias_name"],
+            first_name=first_name or "",
+            last_name=last_name or "",
+            exclude_pk=exclude_pk,
+        )
+
+        suggestions = []
+        if not is_available:
+            suggestions = User.alias_suggestions(
+                first_name=first_name or "",
+                last_name=last_name or "",
+                exclude_pk=exclude_pk,
+            )
+
+        response = {
+            "is_available": is_available,
+            "alias_name": normalize_alias_name(serializer.validated_data["alias_name"]),
+            "message": str(message),
+        }
+        if not is_available:
+            response["suggestions"] = suggestions
+        return Response(response)
 
 
 class UserNameByEmailView(GenericAPIView):

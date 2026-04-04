@@ -64,6 +64,7 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertIn("profile", payload)
         self.assertIn("chat", payload)
         self.assertTrue(payload["auth"]["login"].endswith("/api/auth/login"))
+        self.assertTrue(payload["auth"]["check_alias"].endswith("/api/auth/check-alias"))
         self.assertTrue(payload["chat"]["requests"].endswith("/api/requests/"))
 
     @patch("account.api_views.create_and_send_verification_otp")
@@ -73,14 +74,34 @@ class AccountEndpointCoverageTest(TestCase):
             "password": "password123",
             "first_name": "New",
             "last_name": "User",
-            "alias_name": "newbie",
         }
         response = self.client.post("/auth/register", data=json.dumps(payload), content_type="application/json")
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(User.objects.filter(email="newuser@valid.com", is_verified=False).exists())
         self.assertIn("token", response.json())
+        self.assertTrue(response.json()["alias_name"])
         mock_send_verification.assert_called_once()
+
+    @patch("account.api_views.create_and_send_verification_otp")
+    def test_register_endpoint_rejects_duplicate_alias_name(self, mock_send_verification):
+        User.objects.create_user(email="taken@valid.com", password="password123", alias_name="QuietWave1234")
+
+        response = self.client.post(
+            "/auth/register",
+            data=json.dumps(
+                {
+                    "email": "new-alias-user@valid.com",
+                    "password": "password123",
+                    "alias_name": "quietwave1234",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("alias_name", response.json()["detail"])
+        mock_send_verification.assert_not_called()
 
     @patch("account.api_views.create_and_send_verification_otp")
     def test_register_existing_unverified_user_resends_verification(self, mock_send_verification):
@@ -201,6 +222,52 @@ class AccountEndpointCoverageTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["is_available"])
+
+    def test_check_alias_endpoint_reports_available_alias(self):
+        response = self.client.post(
+            "/auth/check-alias",
+            data=json.dumps({"alias_name": "QuietRiver4321", "first_name": "Ava", "last_name": "Stone"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["is_available"])
+        self.assertEqual(response.json()["alias_name"], "QuietRiver4321")
+
+    def test_check_alias_endpoint_reports_taken_alias(self):
+        User.objects.create_user(email="taken-alias@valid.com", password="password123", alias_name="QuietRiver4321")
+
+        response = self.client.post(
+            "/auth/check-alias",
+            data=json.dumps({"alias_name": "quietriver4321", "first_name": "Ava", "last_name": "Stone"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_available"])
+        self.assertEqual(len(response.json()["suggestions"]), 3)
+
+    def test_check_alias_endpoint_rejects_alias_close_to_real_name(self):
+        response = self.client.post(
+            "/auth/check-alias",
+            data=json.dumps({"alias_name": "Owner User", "first_name": "Owner", "last_name": "User"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_available"])
+        self.assertIn("closely match", response.json()["message"])
+
+    def test_check_alias_endpoint_allows_current_user_alias(self):
+        response = self.client.post(
+            "/auth/check-alias",
+            data=json.dumps({"alias_name": self.user.alias_name}),
+            content_type="application/json",
+            **self.auth_headers(self.user_token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["is_available"])
 
     def test_user_name_by_email_returns_first_and_last_name(self):
         response = self.client.post(
