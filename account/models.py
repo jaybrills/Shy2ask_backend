@@ -162,6 +162,9 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             if alias_token == name_token:
                 matched += 1
                 continue
+            if len(alias_token) == 1 and name_token.startswith(alias_token):
+                matched += 1
+                continue
             if len(alias_token) >= 3 and name_token.startswith(alias_token):
                 matched += 1
                 continue
@@ -171,7 +174,7 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         return matched == len(alias_tokens)
 
     @classmethod
-    def _compact_alias_matches_name_tokens(cls, alias, name_tokens):
+    def _compact_alias_matches_token_sequence(cls, alias, name_tokens):
         if not alias or len(name_tokens) < 2:
             return False
 
@@ -180,28 +183,48 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             return False
 
         min_prefix_len = 3
-        split_count = len(normalized_tokens) - 1
 
-        def search(start_index, token_index):
+        def search(start_index, token_index, has_substantial_piece):
             current_token = normalized_tokens[token_index]
             remaining_tokens = len(normalized_tokens) - token_index - 1
 
-            min_end = start_index + min_prefix_len
-            max_end = len(alias) - (remaining_tokens * min_prefix_len)
-            if token_index == len(normalized_tokens) - 1:
-                piece = alias[start_index:]
-                return bool(piece) and (
-                    current_token.startswith(piece) or cls._is_strict_name_match(piece, current_token)
-                )
+            if start_index >= len(alias):
+                return False
 
+            max_end = len(alias) - remaining_tokens
+            piece_lengths = []
+            if alias[start_index] == current_token[0]:
+                piece_lengths.append(1)
+
+            min_end = start_index + min_prefix_len
             for end_index in range(min_end, max_end + 1):
                 piece = alias[start_index:end_index]
                 if current_token.startswith(piece) or cls._is_strict_name_match(piece, current_token):
-                    if search(end_index, token_index + 1):
+                    piece_lengths.append(len(piece))
+
+            for piece_length in sorted(set(piece_lengths)):
+                next_index = start_index + piece_length
+                next_has_substantial_piece = has_substantial_piece or piece_length >= min_prefix_len
+                if token_index == len(normalized_tokens) - 1:
+                    if next_index == len(alias) and next_has_substantial_piece:
                         return True
+                    continue
+                if search(next_index, token_index + 1, next_has_substantial_piece):
+                    return True
             return False
 
-        return len(alias) >= (len(normalized_tokens) * min_prefix_len) and search(0, 0)
+        return search(0, 0, False)
+
+    @classmethod
+    def _compact_alias_matches_name_tokens(cls, alias, name_tokens):
+        if not alias or len(name_tokens) < 2:
+            return False
+
+        sequences = [name_tokens]
+        reversed_tokens = list(reversed(name_tokens))
+        if reversed_tokens != list(name_tokens):
+            sequences.append(reversed_tokens)
+        return any(cls._compact_alias_matches_token_sequence(alias, sequence) for sequence in sequences)
 
     def _alias_matches_real_name(self):
         raw_alias = normalize_alias_name(self.alias_name)

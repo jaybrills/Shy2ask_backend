@@ -340,6 +340,34 @@ class AccountEndpointCoverageTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("alias_name", response.json()["detail"])
 
+    def test_profile_patch_rejects_alias_using_initial_and_real_name_parts(self):
+        user = User.objects.create_user(
+            email="khajan-profile@valid.com",
+            password="password123",
+            first_name="Khajan",
+            last_name="Singh",
+            is_verified=True,
+        )
+        token, _ = Token.objects.get_or_create(user=user)
+
+        first_response = self.client.patch(
+            "/profile/me",
+            data=json.dumps({"alias_name": "ksingh"}),
+            content_type="application/json",
+            **self.auth_headers(token),
+        )
+        second_response = self.client.patch(
+            "/profile/me",
+            data=json.dumps({"alias_name": "skhajan"}),
+            content_type="application/json",
+            **self.auth_headers(token),
+        )
+
+        self.assertEqual(first_response.status_code, 400)
+        self.assertIn("alias_name", first_response.json()["detail"])
+        self.assertEqual(second_response.status_code, 400)
+        self.assertIn("alias_name", second_response.json()["detail"])
+
     def test_profile_users_requires_staff_and_supports_search(self):
         forbidden = self.client.get("/profile/users", **self.auth_headers(self.user_token))
         self.assertEqual(forbidden.status_code, 403)

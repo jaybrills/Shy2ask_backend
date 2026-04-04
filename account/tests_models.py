@@ -107,6 +107,30 @@ class UserModelTest(TestCase):
 
         self.assertIn("alias_name", exc.exception.message_dict)
 
+    def test_alias_name_cannot_use_first_initial_with_last_name(self):
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="alias-initial-last@valid.com",
+                password="password123",
+                first_name="Khajan",
+                last_name="Singh",
+                alias_name="ksingh",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
+
+    def test_alias_name_cannot_use_last_initial_with_first_name(self):
+        with self.assertRaises(ValidationError) as exc:
+            User.objects.create_user(
+                email="alias-initial-first@valid.com",
+                password="password123",
+                first_name="Khajan",
+                last_name="Singh",
+                alias_name="skhajan",
+            )
+
+        self.assertIn("alias_name", exc.exception.message_dict)
+
 class OTPModelTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(email="user@valid.com", password="password")
