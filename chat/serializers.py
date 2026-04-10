@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .message_service import resolve_display_name, resolve_recipient_name
-from .models import Attachment, Message, ShyRequest, user_display_name_for
+from .models import FAQ, FAQVideo, Attachment, Message, ShyRequest, SupportTicket, SupportTicketReply, user_display_name_for
 from .utils import censor_text
 
 
@@ -286,3 +286,92 @@ class SubscriptionSerializer(serializers.Serializer):
 class SubscriptionCreateSerializer(serializers.Serializer):
     subscription_type = serializers.CharField()
     request_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+class FAQVideoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FAQVideo
+        fields = ["id", "title", "video_url", "sort_order"]
+        read_only_fields = fields
+
+
+class FAQSerializer(serializers.ModelSerializer):
+    videos = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FAQ
+        fields = ["id", "question", "answer", "sort_order", "videos"]
+        read_only_fields = fields
+
+    def get_videos(self, obj):
+        videos = getattr(obj, "active_videos", None)
+        if videos is None:
+            videos = obj.videos.filter(is_active=True)
+        return FAQVideoSerializer(videos, many=True).data
+
+
+class SupportTicketReplySerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportTicketReply
+        fields = ["id", "sender_type", "author", "author_name", "email", "body", "created_at"]
+        read_only_fields = ["id", "sender_type", "author", "author_name", "email", "created_at"]
+
+    def get_author_name(self, obj):
+        if obj.author_id:
+            return user_display_name_for(obj.author) or getattr(obj.author, "email", "")
+        return obj.email
+
+
+class SupportTicketSerializer(serializers.ModelSerializer):
+    replies = SupportTicketReplySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            "id",
+            "tracking_code",
+            "subject",
+            "message",
+            "status",
+            "priority",
+            "assigned_to",
+            "last_reply_at",
+            "created_at",
+            "updated_at",
+            "replies",
+        ]
+        read_only_fields = [
+            "id",
+            "tracking_code",
+            "status",
+            "assigned_to",
+            "last_reply_at",
+            "created_at",
+            "updated_at",
+            "replies",
+        ]
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        user = request.user
+        try:
+            return SupportTicket.objects.create(
+                user=user,
+                email=getattr(user, "email", ""),
+                **validated_data,
+            )
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or {"detail": ["Invalid ticket."]}
+            raise serializers.ValidationError(detail) from exc
+
+
+class SupportTicketReplyCreateSerializer(serializers.Serializer):
+    body = serializers.CharField()
+
+    def validate_body(self, value):
+        _, blocked = censor_text(value)
+        if blocked:
+            raise serializers.ValidationError("Reply contains blocked content.")
+        return value

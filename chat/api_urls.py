@@ -4,17 +4,22 @@ from django.urls import path
 from .api_views import (
     CensorImageView,
     CensorTextView,
+    FAQListView,
     ShyRequestViewSet,
     SubscriptionDetailView,
     SubscriptionListCreateView,
+    SupportTicketViewSet,
     UnreadNotificationListView,
 )
 
 router = DefaultRouter()
 router.trailing_slash = "/?"
 router.register("requests", ShyRequestViewSet, basename="requests")
+router.register("support/tickets", SupportTicketViewSet, basename="support-tickets")
 
 urlpatterns = [
+    path("faq", FAQListView.as_view()),
+    path("faq/", FAQListView.as_view()),
     path("censor/text", CensorTextView.as_view()),
     path("censor/text/", CensorTextView.as_view()),
     path("censor/image", CensorImageView.as_view()),

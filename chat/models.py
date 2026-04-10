@@ -618,6 +618,169 @@ class ConversationMessage(Message):
         verbose_name_plural = "Conversation messages"
 
 
+class FAQ(TimeStampedModel):
+    question = models.CharField(max_length=255)
+    answer = models.TextField()
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "question"]
+        indexes = [
+            models.Index(fields=["is_active", "sort_order"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.question
+
+
+class FAQVideo(TimeStampedModel):
+    faq = models.ForeignKey(FAQ, related_name="videos", on_delete=models.CASCADE)
+    title = models.CharField(max_length=255)
+    video_url = models.URLField()
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        indexes = [
+            models.Index(fields=["faq", "is_active", "sort_order"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class SupportTicketQuerySet(models.QuerySet):
+    def with_related(self):
+        return self.select_related("user", "assigned_to").prefetch_related(
+            models.Prefetch("replies", queryset=SupportTicketReply.objects.select_related("author"))
+        )
+
+    def visible_to(self, user):
+        if getattr(user, "is_staff", False):
+            return self
+        if getattr(user, "is_authenticated", False):
+            return self.filter(user=user)
+        return self.none()
+
+
+class SupportTicketManager(models.Manager.from_queryset(SupportTicketQuerySet)):
+    pass
+
+
+class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
+    class Status(models.TextChoices):
+        OPEN = ("open", "Open")
+        IN_PROGRESS = ("in_progress", "In progress")
+        RESOLVED = ("resolved", "Resolved")
+        CLOSED = ("closed", "Closed")
+
+    class Priority(models.TextChoices):
+        LOW = ("low", "Low")
+        MEDIUM = ("medium", "Medium")
+        HIGH = ("high", "High")
+        URGENT = ("urgent", "Urgent")
+
+    tracking_code = models.CharField(max_length=12, unique=True, blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="support_tickets",
+        on_delete=models.CASCADE,
+    )
+    email = models.EmailField(blank=True)
+    subject = models.CharField(max_length=255)
+    message = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    priority = models.CharField(max_length=20, choices=Priority.choices, default=Priority.MEDIUM)
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="assigned_support_tickets",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    last_reply_at = models.DateTimeField(null=True, blank=True)
+    objects = SupportTicketManager()
+
+    class Meta:
+        ordering = ["-updated_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["status", "-updated_at"]),
+            models.Index(fields=["tracking_code"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.tracking_code or 'TICKET'} - {self.subject}"
+
+    def _generate_unique_tracking_code(self) -> str:
+        while True:
+            tracking_code = generate_tracking_code()
+            exists = type(self).objects.filter(tracking_code=tracking_code).exclude(pk=self.pk).exists()
+            if not exists:
+                return tracking_code
+
+    @property
+    def latest_reply(self):
+        return self.replies.order_by("-created_at").first()
+
+    def save(self, *args, **kwargs):
+        if not self.tracking_code:
+            self.tracking_code = self._generate_unique_tracking_code()
+        self._sync_email_user_pair(user_field="user", email_field="email")
+        if self.message:
+            clean_message, blocked = censor_text(self.message)
+            if blocked:
+                raise ValidationError({"message": ["Message contains blocked content."]})
+            self.message = clean_message
+        super().save(*args, **kwargs)
+
+
+class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
+    class SenderType(models.TextChoices):
+        USER = ("user", "User")
+        STAFF = ("staff", "Staff")
+        ADMIN = ("admin", "Admin")
+
+    ticket = models.ForeignKey(SupportTicket, related_name="replies", on_delete=models.CASCADE)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="support_ticket_replies",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    sender_type = models.CharField(max_length=20, choices=SenderType.choices)
+    email = models.EmailField(blank=True)
+    body = models.TextField()
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["ticket", "created_at"]),
+            models.Index(fields=["sender_type", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.ticket.tracking_code} - {self.get_sender_type_display()}"
+
+    def save(self, *args, **kwargs):
+        self._sync_email_user_pair(user_field="author", email_field="email")
+        if self.body:
+            clean_body, blocked = censor_text(self.body)
+            if blocked:
+                raise ValidationError({"body": ["Reply contains blocked content."]})
+            self.body = clean_body
+        super().save(*args, **kwargs)
+        ticket_status = SupportTicket.Status.IN_PROGRESS if self.sender_type in {self.SenderType.STAFF, self.SenderType.ADMIN} else SupportTicket.Status.OPEN
+        SupportTicket.objects.filter(pk=self.ticket_id).update(
+            last_reply_at=self.created_at,
+            status=ticket_status if self.ticket.status != SupportTicket.Status.CLOSED else self.ticket.status,
+            updated_at=self.created_at,
+        )
+
+
 def link_user_references(user):
     email = _normalize_email(getattr(user, "email", ""))
     if not email:

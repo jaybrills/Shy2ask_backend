@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import permissions, status, viewsets
@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 
 from .censor_engine import censor_image, censor_text_full
 from .emailing import send_request_created_emails
-from .models import ConversationMessage, Message, Notification, ShyRequest, Subscription
+from .models import FAQ, FAQVideo, ConversationMessage, Message, Notification, ShyRequest, Subscription, SupportTicket, SupportTicketReply
 from .message_service import (
     MessageAccessError,
     can_access_conversation,
@@ -23,12 +23,16 @@ from .serializers import (
     CensorImageResultSerializer,
     CensorResultSerializer,
     CensorTextInputSerializer,
+    FAQSerializer,
     MessageInputSerializer,
     MessageSerializer,
     ReplyByTrackingSerializer,
     ShyRequestSerializer,
     SubscriptionCreateSerializer,
     SubscriptionSerializer,
+    SupportTicketReplyCreateSerializer,
+    SupportTicketReplySerializer,
+    SupportTicketSerializer,
 )
 
 
@@ -239,6 +243,54 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         ).filter(has_target_reply=False)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+
+class FAQListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(responses=FAQSerializer(many=True), tags=["FAQ"])
+    def get(self, request):
+        faqs = FAQ.objects.filter(is_active=True).prefetch_related(
+            Prefetch("videos", queryset=FAQVideo.objects.filter(is_active=True), to_attr="active_videos")
+        )
+        return Response(FAQSerializer(faqs, many=True).data)
+
+
+class SupportTicketViewSet(viewsets.ModelViewSet):
+    serializer_class = SupportTicketSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+    http_method_names = ["get", "post"]
+
+    def get_queryset(self):
+        return SupportTicket.objects.visible_to(self.request.user).with_related()
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    @extend_schema(
+        request=SupportTicketReplyCreateSerializer,
+        responses=SupportTicketReplySerializer,
+        tags=["Support"],
+    )
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def replies(self, request, pk=None):
+        ticket = get_object_or_404(self.get_queryset(), pk=pk)
+        payload = SupportTicketReplyCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        try:
+            reply = SupportTicketReply.objects.create(
+                ticket=ticket,
+                author=request.user,
+                email=getattr(request.user, "email", ""),
+                sender_type=SupportTicketReply.SenderType.USER,
+                body=payload.validated_data["body"],
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(SupportTicketReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
 
 class CensorTextView(APIView):

@@ -11,11 +11,15 @@ from .models import (
     CensorTrainingExample,
     ConversationMessage,
     Deal,
+    FAQ,
+    FAQVideo,
     Message,
     Notification,
     OffensiveTerm,
     ShyRequest,
     Subscription,
+    SupportTicket,
+    SupportTicketReply,
 )
 
 
@@ -32,6 +36,19 @@ class AttachmentInline(TabularInline):
     model = Attachment
     extra = 0
     readonly_fields = ("uploaded_at",)
+
+
+class FAQVideoInline(TabularInline):
+    model = FAQVideo
+    extra = 0
+    fields = ("title", "video_url", "sort_order", "is_active")
+
+
+class SupportTicketReplyInline(TabularInline):
+    model = SupportTicketReply
+    extra = 0
+    fields = ("sender_type", "author", "email", "body", "created_at")
+    readonly_fields = ("created_at",)
 
 
 class MessageInline(TabularInline):
@@ -188,6 +205,23 @@ class ConversationMessageAdmin(MessageAdmin):
         return super().get_queryset(request).conversation()
 
 
+@admin.register(FAQ)
+class FAQAdmin(ModelAdmin):
+    list_display = ("question", "is_active", "sort_order", "updated_at")
+    list_filter = ("is_active", "created_at", "updated_at")
+    search_fields = ("question", "answer")
+    list_editable = ("is_active", "sort_order")
+    inlines = [FAQVideoInline]
+
+
+@admin.register(FAQVideo)
+class FAQVideoAdmin(ModelAdmin):
+    list_display = ("title", "faq", "is_active", "sort_order", "updated_at")
+    list_filter = ("is_active", "created_at", "updated_at")
+    search_fields = ("title", "video_url", "faq__question")
+    raw_id_fields = ("faq",)
+
+
 @admin.register(Notification)
 class NotificationAdmin(ModelAdmin):
     list_fullwidth = True
@@ -234,6 +268,81 @@ class SubscriptionAdmin(ModelAdmin):
     list_filter = ("subscription_type", "is_active", "created_at")
     search_fields = ("user__email", "request__tracking_code")
     raw_id_fields = ("user", "request")
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(ModelAdmin):
+    list_fullwidth = True
+    list_filter_submit = True
+    list_display = (
+        "tracking_code",
+        "subject",
+        "user",
+        "status_badge",
+        "priority",
+        "assigned_to",
+        "last_reply_at",
+        "created_at",
+    )
+    list_filter = ("status", "priority", "created_at", "last_reply_at")
+    search_fields = ("tracking_code", "subject", "message", "email", "user__email")
+    raw_id_fields = ("user", "assigned_to")
+    readonly_fields = ("tracking_code", "created_at", "updated_at", "last_reply_at")
+    inlines = [SupportTicketReplyInline]
+    fieldsets = (
+        (
+            "Ticket",
+            {
+                "fields": (
+                    "tracking_code",
+                    "user",
+                    "email",
+                    "subject",
+                    "message",
+                    "status",
+                    "priority",
+                    "assigned_to",
+                )
+            },
+        ),
+        ("Audit", {"fields": ("last_reply_at", "created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        colors = {
+            SupportTicket.Status.OPEN: "#1d4ed8",
+            SupportTicket.Status.IN_PROGRESS: "#b45309",
+            SupportTicket.Status.RESOLVED: "#15803d",
+            SupportTicket.Status.CLOSED: "#667085",
+        }
+        return badge(obj.get_status_display(), colors.get(obj.status, "#475467"))
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in instances:
+            if isinstance(obj, SupportTicketReply) and not obj.author_id:
+                obj.author = request.user
+                obj.email = getattr(request.user, "email", "") or obj.email
+                if not obj.sender_type:
+                    obj.sender_type = (
+                        SupportTicketReply.SenderType.ADMIN
+                        if request.user.is_superuser
+                        else SupportTicketReply.SenderType.STAFF
+                    )
+            obj.save()
+        for obj in formset.deleted_objects:
+            obj.delete()
+        formset.save_m2m()
+
+
+@admin.register(SupportTicketReply)
+class SupportTicketReplyAdmin(ModelAdmin):
+    list_display = ("ticket", "sender_type", "author", "email", "created_at")
+    list_filter = ("sender_type", "created_at")
+    search_fields = ("ticket__tracking_code", "ticket__subject", "body", "email", "author__email")
+    raw_id_fields = ("ticket", "author")
+    readonly_fields = ("created_at",)
 
 
 class OffensiveTermInline(TabularInline):
