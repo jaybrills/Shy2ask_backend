@@ -150,6 +150,65 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(target_post.data["direction"], "outbound")
         self.assertEqual(target_post.data["sender_role"], Message.Actor.TARGET)
 
+    def test_message_reply_to_specific_message(self):
+        first_reply = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "First reply"},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(first_reply.status_code, 201)
+
+        second_reply = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "Replying to first", "reply_to_id": first_reply.data["id"]},
+            format="json",
+            **self.auth_headers(self.target_token),
+        )
+        self.assertEqual(second_reply.status_code, 201)
+        self.assertEqual(second_reply.data["reply_to_id"], first_reply.data["id"])
+        self.assertEqual(second_reply.data["reply_to_body"], "First reply")
+
+    def test_tracking_reply_to_specific_message(self):
+        initial_message = self.request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST)
+
+        reply = self.client.post(
+            "/api/requests/reply/",
+            {
+                "tracking_code": self.request.tracking_code,
+                "body": "Reply using tracking",
+                "reply_to_id": initial_message.id,
+            },
+            format="json",
+        )
+        self.assertEqual(reply.status_code, 201)
+        self.assertEqual(reply.data["message"]["reply_to_id"], initial_message.id)
+        self.assertEqual(reply.data["message"]["reply_to_body"], self.request.description)
+
+    def test_reply_to_message_must_belong_to_same_request(self):
+        other_request = ShyRequest.objects.create(
+            user=self.owner,
+            requester_user=self.owner,
+            requester_name="Requester Other",
+            requester_email=self.owner.email,
+            requester_alias="RequesterAlias",
+            target_name="Target Other",
+            target_email=self.target.email,
+            description="Completely separate request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        foreign_message = other_request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST)
+
+        response = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "Should fail", "reply_to_id": foreign_message.id},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Reply target message was not found.", response.data["detail"])
+
     def test_reply_and_conversation_by_tracking_endpoints(self):
         reply = self.client.post(
             "/api/requests/reply/",

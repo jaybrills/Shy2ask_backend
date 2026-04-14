@@ -71,6 +71,7 @@ def create_message_for_request(
     user=None,
     tracking_code: str | None = None,
     alias: str | None = None,
+    reply_to_id: int | None = None,
     run_async_business_logic: bool = True,
 ) -> Message:
     """Create message with shared business rules across REST/WebSocket flows."""
@@ -78,6 +79,12 @@ def create_message_for_request(
         raise ValidationError("This request has been deleted.")
     if shy_request.is_blocked:
         raise ValidationError("This request has been blocked.")
+
+    parent_message = None
+    if reply_to_id:
+        parent_message = Message.objects.filter(request=shy_request, pk=reply_to_id).first()
+        if not parent_message:
+            raise ValidationError("Reply target message was not found.")
 
     sender, author = _resolve_sender(shy_request, user=user, tracking_code=tracking_code)
 
@@ -101,6 +108,7 @@ def create_message_for_request(
 
     msg = Message(
         request=shy_request,
+        parent_message=parent_message,
         sender=sender,
         recipient=recipient,
         message_kind=Message.Kind.REPLY,

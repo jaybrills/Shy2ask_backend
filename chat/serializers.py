@@ -26,11 +26,15 @@ class MessageSerializer(serializers.ModelSerializer):
     recipient_label = serializers.SerializerMethodField()
     direction = serializers.SerializerMethodField()
     is_mine = serializers.SerializerMethodField()
+    reply_to_id = serializers.SerializerMethodField()
+    reply_to_body = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
         fields = [
             "id",
+            "reply_to_id",
+            "reply_to_body",
             "message_kind",
             "sender",
             "recipient",
@@ -65,6 +69,8 @@ class MessageSerializer(serializers.ModelSerializer):
             "recipient_name",
             "direction",
             "is_mine",
+            "reply_to_id",
+            "reply_to_body",
         ]
 
     def get_display_name(self, obj):
@@ -109,6 +115,15 @@ class MessageSerializer(serializers.ModelSerializer):
     def get_is_mine(self, obj):
         viewer_role = self._viewer_role()
         return bool(viewer_role and obj.sender == viewer_role)
+
+    def get_reply_to_id(self, obj):
+        return obj.parent_message_id
+
+    def get_reply_to_body(self, obj):
+        if not obj.parent_message:
+            return None
+        body = obj.parent_message.clean_body or obj.parent_message.body or ""
+        return body[:120]
 
 class ShyRequestSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)
@@ -248,12 +263,14 @@ class MessageInputSerializer(serializers.Serializer):
     body = serializers.CharField()
     alias = serializers.CharField(required=False, allow_blank=True)
     tracking_code = serializers.CharField(required=False, allow_blank=True)
+    reply_to_id = serializers.IntegerField(required=False, min_value=1)
 
 
 class ReplyByTrackingSerializer(serializers.Serializer):
     tracking_code = serializers.CharField()
     body = serializers.CharField()
     alias = serializers.CharField(required=False, allow_blank=True)
+    reply_to_id = serializers.IntegerField(required=False, min_value=1)
 
 
 class BulkSoftDeleteSerializer(serializers.Serializer):

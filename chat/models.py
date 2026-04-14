@@ -551,6 +551,13 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     request = models.ForeignKey(
         ShyRequest, related_name="messages", on_delete=models.CASCADE
     )
+    parent_message = models.ForeignKey(
+        "self",
+        related_name="replies",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     sender = models.CharField(max_length=20, choices=Actor.choices)
     recipient = models.CharField(
         max_length=20, choices=Actor.choices, default=Actor.TARGET
@@ -597,6 +604,7 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
         ordering = ["created_at"]
         indexes = [
             models.Index(fields=["request", "created_at"]),
+            models.Index(fields=["parent_message", "created_at"]),
             models.Index(fields=["sender", "created_at"]),
             models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
@@ -613,6 +621,13 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     def clean(self):
         self._sync_email_user_pair(user_field="sender_user", email_field="sender_email")
         self._sync_email_user_pair(user_field="recipient_user", email_field="recipient_email")
+        if self.parent_message_id:
+            if self.parent_message_id == self.pk:
+                raise ValidationError("A message cannot reply to itself.")
+            if self.parent_message.request_id != self.request_id:
+                raise ValidationError("Reply target must belong to the same request.")
+            if self.parent_message.is_deleted:
+                raise ValidationError("Reply target has been deleted.")
         if not self.author_id:
             self.author = self.sender_user
         if self.sender == self.Actor.REQUESTER and not self.sender_display_name:

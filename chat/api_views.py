@@ -185,6 +185,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
                 user=request.user,
                 tracking_code=tracking_code or payload.validated_data.get("tracking_code"),
                 alias=payload.validated_data.get("alias"),
+                reply_to_id=payload.validated_data.get("reply_to_id"),
             )
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
@@ -287,6 +288,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
                 payload.validated_data["body"],
                 tracking_code=tracking_code,
                 alias=payload.validated_data.get("alias"),
+                reply_to_id=payload.validated_data.get("reply_to_id"),
             )
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
