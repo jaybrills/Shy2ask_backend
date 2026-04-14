@@ -256,6 +256,17 @@ class ReplyByTrackingSerializer(serializers.Serializer):
     alias = serializers.CharField(required=False, allow_blank=True)
 
 
+class BulkSoftDeleteSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+
+
+class RequestBlockSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
 class CensorTextInputSerializer(serializers.Serializer):
     text = serializers.CharField()
 

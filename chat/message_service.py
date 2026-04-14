@@ -74,6 +74,11 @@ def create_message_for_request(
     run_async_business_logic: bool = True,
 ) -> Message:
     """Create message with shared business rules across REST/WebSocket flows."""
+    if shy_request.is_deleted:
+        raise ValidationError("This request has been deleted.")
+    if shy_request.is_blocked:
+        raise ValidationError("This request has been blocked.")
+
     sender, author = _resolve_sender(shy_request, user=user, tracking_code=tracking_code)
 
     alias_clean = (alias or "").strip()

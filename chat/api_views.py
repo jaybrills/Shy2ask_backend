@@ -20,12 +20,14 @@ from .message_service import (
 )
 from account.api_views import BearerTokenAuthentication
 from .serializers import (
+    BulkSoftDeleteSerializer,
     CensorImageResultSerializer,
     CensorResultSerializer,
     CensorTextInputSerializer,
     FAQSerializer,
     MessageInputSerializer,
     MessageSerializer,
+    RequestBlockSerializer,
     ReplyByTrackingSerializer,
     ShyRequestSerializer,
     SubscriptionCreateSerializer,
@@ -40,7 +42,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     serializer_class = ShyRequestSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = [BearerTokenAuthentication]
-    http_method_names = ["get", "post"]
+    http_method_names = ["get", "post", "delete"]
 
     def get_queryset(self):
         qs = ShyRequest.objects.with_related()
@@ -111,6 +113,22 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             return Message.Actor.TARGET
         return None
 
+    def _can_manage_request(self, request, shy_request):
+        user = request.user if request.user.is_authenticated else None
+        if not user:
+            return False
+        if getattr(user, "is_staff", False):
+            return True
+        return user.id in {shy_request.user_id, shy_request.requester_user_id, shy_request.target_user_id}
+
+    def _can_block_request(self, request, shy_request):
+        user = request.user if request.user.is_authenticated else None
+        if not user:
+            return False
+        if getattr(user, "is_staff", False):
+            return True
+        return user.id == shy_request.target_user_id
+
     def _conversation_response(self, request, shy_request, messages_qs, tracking_code: str = ""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         serialized_messages = MessageSerializer(
@@ -175,6 +193,13 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 
         return Response(self._message_response(request, shy_request, msg, tracking_code=tracking_code), status=status.HTTP_201_CREATED)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._can_manage_request(request, instance):
+            return Response({"detail": "You are not allowed to delete this request."}, status=status.HTTP_403_FORBIDDEN)
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["get"], permission_classes=[permissions.AllowAny])
     def conversation(self, request, pk=None):
         try:
@@ -184,6 +209,64 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 
         messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=tracking_code))
+
+    @action(detail=False, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        payload = BulkSoftDeleteSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        queryset = ShyRequest.objects.for_participant(user=request.user).filter(id__in=payload.validated_data["ids"])
+        deleted_count = queryset.soft_delete()
+        return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["delete"], permission_classes=[permissions.IsAuthenticated], url_path=r"messages/(?P<message_id>[^/.]+)")
+    def delete_message(self, request, pk=None, message_id=None):
+        shy_request = get_object_or_404(ShyRequest.objects, pk=pk)
+        if not self._can_manage_request(request, shy_request):
+            return Response({"detail": "You are not allowed to delete messages for this request."}, status=status.HTTP_403_FORBIDDEN)
+
+        message = get_object_or_404(Message.objects, pk=message_id, request=shy_request)
+        message.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="messages/bulk-delete")
+    def bulk_delete_messages(self, request, pk=None):
+        payload = BulkSoftDeleteSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        shy_request = get_object_or_404(ShyRequest.objects, pk=pk)
+        if not self._can_manage_request(request, shy_request):
+            return Response({"detail": "You are not allowed to delete messages for this request."}, status=status.HTTP_403_FORBIDDEN)
+
+        deleted_count = Message.objects.filter(
+            request=shy_request,
+            id__in=payload.validated_data["ids"],
+        ).soft_delete()
+        return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def block(self, request, pk=None):
+        payload = RequestBlockSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        shy_request = get_object_or_404(ShyRequest.objects.select_related("requester_user", "user", "target_user"), pk=pk)
+        if not self._can_block_request(request, shy_request):
+            return Response({"detail": "You are not allowed to block this request."}, status=status.HTTP_403_FORBIDDEN)
+
+        blocked_count, blocked_user = shy_request.block(
+            actor=request.user,
+            note=payload.validated_data.get("note", ""),
+        )
+        return Response(
+            {
+                "request_id": shy_request.id,
+                "is_blocked": shy_request.is_blocked,
+                "status": shy_request.status,
+                "blocked_requests_count": blocked_count,
+                "requester_user_blocked": blocked_user,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(
         detail=False,

@@ -219,6 +219,132 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertIn(unreplied_request.id, returned_ids)
         self.assertNotIn(replied_request.id, returned_ids)
 
+    def test_request_soft_delete_hides_request_and_messages(self):
+        message = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.REQUESTER,
+            recipient=Message.Actor.TARGET,
+            message_kind=Message.Kind.REPLY,
+            sender_user=self.owner,
+            recipient_user=self.target,
+            sender_email=self.owner.email,
+            recipient_email=self.target.email,
+            body="Delete this thread",
+        )
+
+        response = self.client.delete(
+            f"/api/requests/{self.request.id}/",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(ShyRequest.objects.filter(id=self.request.id).exists())
+        self.assertTrue(ShyRequest.all_objects.get(id=self.request.id).is_deleted)
+        self.assertFalse(Message.objects.filter(id=message.id).exists())
+        self.assertTrue(Message.all_objects.get(id=message.id).is_deleted)
+
+    def test_bulk_request_soft_delete(self):
+        another_request = ShyRequest.objects.create(
+            user=self.owner,
+            requester_user=self.owner,
+            requester_name="Requester Name 3",
+            requester_email=self.owner.email,
+            requester_alias="RequesterAlias",
+            target_name="Target Name 3",
+            target_email="third@valid.com",
+            description="Bulk delete me",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+
+        response = self.client.post(
+            "/api/requests/bulk-delete/",
+            {"ids": [self.request.id, another_request.id]},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted_count"], 2)
+        self.assertEqual(ShyRequest.objects.filter(id__in=[self.request.id, another_request.id]).count(), 0)
+        self.assertEqual(ShyRequest.all_objects.filter(id__in=[self.request.id, another_request.id], is_deleted=True).count(), 2)
+
+    def test_message_soft_delete_endpoints(self):
+        first_reply = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.REQUESTER,
+            recipient=Message.Actor.TARGET,
+            message_kind=Message.Kind.REPLY,
+            sender_user=self.owner,
+            recipient_user=self.target,
+            sender_email=self.owner.email,
+            recipient_email=self.target.email,
+            body="Delete this message",
+        )
+        second_reply = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.TARGET,
+            recipient=Message.Actor.REQUESTER,
+            message_kind=Message.Kind.REPLY,
+            sender_user=self.target,
+            recipient_user=self.owner,
+            sender_email=self.target.email,
+            recipient_email=self.owner.email,
+            body="Delete this one too",
+        )
+
+        delete_response = self.client.delete(
+            f"/api/requests/{self.request.id}/messages/{first_reply.id}/",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertFalse(Message.objects.filter(id=first_reply.id).exists())
+        self.assertTrue(Message.all_objects.get(id=first_reply.id).is_deleted)
+
+        bulk_response = self.client.post(
+            f"/api/requests/{self.request.id}/messages/bulk-delete/",
+            {"ids": [second_reply.id]},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(bulk_response.status_code, 200)
+        self.assertEqual(bulk_response.data["deleted_count"], 1)
+        self.assertFalse(Message.objects.filter(id=second_reply.id).exists())
+        self.assertTrue(Message.all_objects.get(id=second_reply.id).is_deleted)
+
+    def test_blocking_three_requests_deactivates_requester(self):
+        requests_to_block = [self.request]
+        for index in range(2):
+            requests_to_block.append(
+                ShyRequest.objects.create(
+                    user=self.owner,
+                    requester_user=self.owner,
+                    requester_name=f"Requester Name {index}",
+                    requester_email=self.owner.email,
+                    requester_alias="RequesterAlias",
+                    target_user=self.target,
+                    target_name="Target Name",
+                    target_email=self.target.email,
+                    description=f"Follow up request {index}",
+                    status=ShyRequest.Status.SUBMITTED,
+                )
+            )
+
+        final_response = None
+        for blocked_request in requests_to_block:
+            final_response = self.client.post(
+                f"/api/requests/{blocked_request.id}/block/",
+                {"note": "Unsafe request"},
+                format="json",
+                **self.auth_headers(self.target_token),
+            )
+            self.assertEqual(final_response.status_code, 200)
+
+        self.owner.refresh_from_db()
+        self.assertFalse(self.owner.is_active)
+        self.assertEqual(final_response.data["blocked_requests_count"], 3)
+        self.assertTrue(final_response.data["requester_user_blocked"])
+        self.assertEqual(ShyRequest.all_objects.filter(requester_user=self.owner, is_blocked=True).count(), 3)
+
     def test_unread_messages_endpoint_returns_only_current_users_unread_notifications(self):
         Notification.objects.create(
             recipient_user=self.owner,

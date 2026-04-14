@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from .utils import censor_text
 
@@ -74,7 +75,81 @@ class EmailUserResolutionModel(models.Model):
         return user, email
 
 
-class ShyRequestQuerySet(models.QuerySet):
+class SoftDeleteModel(models.Model):
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def soft_delete(self, *, save: bool = True):
+        if self.is_deleted:
+            return False
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        if save:
+            update_fields = ["is_deleted", "deleted_at"]
+            if hasattr(self, "updated_at"):
+                update_fields.append("updated_at")
+            self.save(update_fields=update_fields)
+        return True
+
+    def restore(self, *, save: bool = True):
+        if not self.is_deleted:
+            return False
+        self.is_deleted = False
+        self.deleted_at = None
+        if save:
+            update_fields = ["is_deleted", "deleted_at"]
+            if hasattr(self, "updated_at"):
+                update_fields.append("updated_at")
+            self.save(update_fields=update_fields)
+        return True
+
+    def hard_delete(self, *args, **kwargs):
+        return super().delete(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        self.soft_delete()
+
+
+class SoftDeleteQuerySet(models.QuerySet):
+    def alive(self):
+        return self.filter(is_deleted=False)
+
+    def deleted(self):
+        return self.filter(is_deleted=True)
+
+    def soft_delete(self):
+        queryset = self.alive()
+        timestamp = timezone.now()
+        update_kwargs = {
+            "is_deleted": True,
+            "deleted_at": timestamp,
+        }
+        if any(field.name == "updated_at" for field in self.model._meta.fields):
+            update_kwargs["updated_at"] = timestamp
+        return queryset.update(**update_kwargs)
+
+    def restore(self):
+        queryset = self.deleted()
+        timestamp = timezone.now()
+        update_kwargs = {
+            "is_deleted": False,
+            "deleted_at": None,
+        }
+        if any(field.name == "updated_at" for field in self.model._meta.fields):
+            update_kwargs["updated_at"] = timestamp
+        return queryset.update(**update_kwargs)
+
+    def hard_delete(self):
+        return super().delete()
+
+    def delete(self):
+        return self.soft_delete()
+
+
+class ShyRequestQuerySet(SoftDeleteQuerySet):
     def with_related(self):
         return self.select_related("user", "requester_user", "target_user").prefetch_related("attachments")
 
@@ -101,8 +176,22 @@ class ShyRequestQuerySet(models.QuerySet):
             clauses |= models.Q(target_email__iexact=normalized_email)
         return self.filter(clauses) if clauses else self.none()
 
+    def soft_delete(self):
+        request_ids = list(self.alive().values_list("id", flat=True))
+        if not request_ids:
+            return 0
+        Message.all_objects.filter(request_id__in=request_ids).soft_delete()
+        return super().soft_delete()
 
-class ShyRequestManager(models.Manager.from_queryset(ShyRequestQuerySet)):
+
+class ShyRequestBaseManager(models.Manager.from_queryset(ShyRequestQuerySet)):
+    pass
+
+
+class ShyRequestManager(ShyRequestBaseManager):
+    def get_queryset(self):
+        return super().get_queryset().alive()
+
     def create_submission(self, *, actor=None, status=None, **validated_data):
         if actor and getattr(actor, "is_authenticated", False):
             validated_data.setdefault("user", actor)
@@ -122,7 +211,11 @@ class ActiveShyRequestManager(ShyRequestManager):
         return super().get_queryset().open()
 
 
-class MessageQuerySet(models.QuerySet):
+class ShyRequestAllManager(ShyRequestBaseManager):
+    pass
+
+
+class MessageQuerySet(SoftDeleteQuerySet):
     def with_related(self):
         return self.select_related("author", "request", "sender_user", "recipient_user")
 
@@ -133,7 +226,16 @@ class MessageQuerySet(models.QuerySet):
         return self.filter(request=shy_request)
 
 
-class MessageManager(models.Manager.from_queryset(MessageQuerySet)):
+class MessageBaseManager(models.Manager.from_queryset(MessageQuerySet)):
+    pass
+
+
+class MessageManager(MessageBaseManager):
+    def get_queryset(self):
+        return super().get_queryset().alive()
+
+
+class MessageAllManager(MessageBaseManager):
     pass
 
 
@@ -185,7 +287,7 @@ class SubscriptionManager(models.Manager.from_queryset(SubscriptionQuerySet)):
     pass
 
 
-class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
+class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
     class ServiceChannel(models.TextChoices):
         EMAIL = ("email", "E-mail")
         LETTER = ("letter", "Letter")
@@ -244,8 +346,19 @@ class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.DRAFT
     )
+    is_blocked = models.BooleanField(default=False)
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    blocked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="blocked_shy_requests",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    block_note = models.CharField(max_length=255, blank=True)
 
     objects = ShyRequestManager()
+    all_objects = ShyRequestAllManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -253,6 +366,8 @@ class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
             models.Index(fields=["user", "-created_at"]),
             models.Index(fields=["requester_email", "-created_at"]),
             models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["is_deleted", "-created_at"]),
+            models.Index(fields=["is_blocked", "-created_at"]),
         ]
 
     def calculate_price(self) -> Decimal:
@@ -283,7 +398,7 @@ class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
     def _generate_unique_tracking_code(self) -> str:
         while True:
             tracking_code = generate_tracking_code()
-            exists = type(self).objects.filter(tracking_code=tracking_code).exclude(pk=self.pk).exists()
+            exists = type(self).all_objects.filter(tracking_code=tracking_code).exclude(pk=self.pk).exists()
             if not exists:
                 return tracking_code
 
@@ -371,6 +486,41 @@ class ShyRequest(TimeStampedModel, EmailUserResolutionModel):
         if self.description or is_new:
             self.ensure_description_message()
 
+    def soft_delete(self, *, save: bool = True):
+        if not super().soft_delete(save=save):
+            return False
+        Message.all_objects.filter(request=self).soft_delete()
+        return True
+
+    def _blocked_request_count_for_requester(self):
+        requester = self.requester_user or self.user
+        if not requester:
+            return 0
+        return type(self).all_objects.filter(
+            models.Q(requester_user=requester) | models.Q(user=requester, requester_user__isnull=True),
+            is_blocked=True,
+        ).count()
+
+    def block(self, *, actor=None, note: str = ""):
+        if self.is_blocked:
+            return self._blocked_request_count_for_requester(), False
+
+        self.is_blocked = True
+        self.blocked_at = timezone.now()
+        self.blocked_by = actor if getattr(actor, "is_authenticated", False) else None
+        self.block_note = (note or "").strip()
+        self.status = self.Status.REJECTED
+        self.save(update_fields=["is_blocked", "blocked_at", "blocked_by", "block_note", "status", "updated_at"])
+
+        requester = self.requester_user or self.user
+        blocked_user = False
+        blocked_count = self._blocked_request_count_for_requester()
+        if requester and blocked_count >= 3 and requester.is_active:
+            requester.is_active = False
+            requester.save(update_fields=["is_active", "updated_at"])
+            blocked_user = True
+        return blocked_count, blocked_user
+
     def __str__(self) -> str:
         return f"Request by {self.requester_name} ({self.service_channel})"
 
@@ -386,7 +536,7 @@ class Attachment(models.Model):
         return self.file.name
 
 
-class Message(EmailUserResolutionModel, CreatedAtModel):
+class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     class Actor(models.TextChoices):
         REQUESTER = ("requester", "Requester")
         STAFF = ("staff", "Staff")
@@ -441,6 +591,7 @@ class Message(EmailUserResolutionModel, CreatedAtModel):
     clean_body = models.TextField(blank=True)
     is_blocked = models.BooleanField(default=False)
     objects = MessageManager()
+    all_objects = MessageAllManager()
 
     class Meta:
         ordering = ["created_at"]
@@ -449,6 +600,7 @@ class Message(EmailUserResolutionModel, CreatedAtModel):
             models.Index(fields=["sender", "created_at"]),
             models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
+            models.Index(fields=["is_deleted", "created_at"]),
         ]
 
     def __str__(self):
