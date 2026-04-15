@@ -356,8 +356,11 @@ class ChatEndpointCoverageTest(TestCase):
             **self.auth_headers(self.owner_token),
         )
         self.assertEqual(delete_response.status_code, 204)
-        self.assertFalse(Message.objects.filter(id=first_reply.id).exists())
-        self.assertTrue(Message.all_objects.get(id=first_reply.id).is_deleted)
+        first_reply.refresh_from_db()
+        self.assertFalse(first_reply.is_deleted)
+        self.assertTrue(first_reply.deleted_by_sender)
+        self.assertIsNotNone(first_reply.sender_deleted_at)
+        self.assertFalse(first_reply.deleted_by_recipient)
 
         bulk_response = self.client.post(
             f"/api/requests/{self.request.id}/messages/bulk-delete/",
@@ -367,8 +370,29 @@ class ChatEndpointCoverageTest(TestCase):
         )
         self.assertEqual(bulk_response.status_code, 200)
         self.assertEqual(bulk_response.data["deleted_count"], 1)
-        self.assertFalse(Message.objects.filter(id=second_reply.id).exists())
-        self.assertTrue(Message.all_objects.get(id=second_reply.id).is_deleted)
+        second_reply.refresh_from_db()
+        self.assertFalse(second_reply.is_deleted)
+        self.assertTrue(second_reply.deleted_by_recipient)
+        self.assertIsNotNone(second_reply.recipient_deleted_at)
+        self.assertFalse(second_reply.deleted_by_sender)
+
+        owner_conversation = self.client.get(
+            f"/api/requests/{self.request.id}/conversation/",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(owner_conversation.status_code, 200)
+        owner_message_ids = {item["id"] for item in owner_conversation.data["messages"]}
+        self.assertNotIn(first_reply.id, owner_message_ids)
+        self.assertNotIn(second_reply.id, owner_message_ids)
+
+        target_conversation = self.client.get(
+            f"/api/requests/{self.request.id}/conversation/",
+            **self.auth_headers(self.target_token),
+        )
+        self.assertEqual(target_conversation.status_code, 200)
+        target_message_ids = {item["id"] for item in target_conversation.data["messages"]}
+        self.assertIn(first_reply.id, target_message_ids)
+        self.assertIn(second_reply.id, target_message_ids)
 
     def test_blocking_three_requests_deactivates_requester(self):
         requests_to_block = [self.request]

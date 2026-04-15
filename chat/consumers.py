@@ -154,7 +154,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Get recent messages for this request; include display_name (alias or profile default)."""
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
-            messages = Message.objects.filter(request=request).select_related(
+            viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
+            messages = Message.objects.filter(request=request).visible_to(viewer_role).select_related(
                 "author",
                 "request",
                 "sender_user",

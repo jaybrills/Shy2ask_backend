@@ -172,6 +172,10 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         return MessageSerializer(message, context={"viewer_role": viewer_role}).data
 
+    def _visible_messages_qs(self, request, shy_request, tracking_code: str = ""):
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        return ConversationMessage.objects.for_request(shy_request).with_related().visible_to(viewer_role)
+
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
         payload = MessageInputSerializer(data=request.data)
@@ -208,7 +212,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
-        messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
+        messages_qs = self._visible_messages_qs(request, shy_request, tracking_code=tracking_code)
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=tracking_code))
 
     @action(detail=False, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="bulk-delete")
@@ -226,8 +230,10 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         if not self._can_manage_request(request, shy_request):
             return Response({"detail": "You are not allowed to delete messages for this request."}, status=status.HTTP_403_FORBIDDEN)
 
-        message = get_object_or_404(Message.objects, pk=message_id, request=shy_request)
-        message.delete()
+        message = get_object_or_404(Message.all_objects, pk=message_id, request=shy_request, is_deleted=False)
+        deleted = message.delete(actor_role=self._viewer_role(request, shy_request))
+        if not deleted:
+            return Response({"detail": "You are not allowed to delete this message."}, status=status.HTTP_403_FORBIDDEN)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="messages/bulk-delete")
@@ -239,10 +245,11 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         if not self._can_manage_request(request, shy_request):
             return Response({"detail": "You are not allowed to delete messages for this request."}, status=status.HTTP_403_FORBIDDEN)
 
-        deleted_count = Message.objects.filter(
+        deleted_count = Message.all_objects.filter(
             request=shy_request,
             id__in=payload.validated_data["ids"],
-        ).soft_delete()
+            is_deleted=False,
+        ).soft_delete_for_actor(self._viewer_role(request, shy_request))
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
@@ -317,7 +324,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def conversation_by_tracking(self, request, tracking_code=None):
         normalized_tracking = (tracking_code or "").strip()
         shy_request = get_object_or_404(ShyRequest, tracking_code=normalized_tracking)
-        messages_qs = ConversationMessage.objects.for_request(shy_request).with_related()
+        messages_qs = self._visible_messages_qs(request, shy_request, tracking_code=normalized_tracking)
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=normalized_tracking))
 
     @extend_schema(responses=ShyRequestSerializer(many=True), tags=["Requests"])

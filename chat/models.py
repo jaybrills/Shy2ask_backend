@@ -217,13 +217,55 @@ class ShyRequestAllManager(ShyRequestBaseManager):
 
 class MessageQuerySet(SoftDeleteQuerySet):
     def with_related(self):
-        return self.select_related("author", "request", "sender_user", "recipient_user")
+        return self.select_related("author", "request", "sender_user", "recipient_user", "parent_message")
 
     def conversation(self):
         return self.exclude(message_kind=Message.Kind.NOTE).order_by("created_at")
 
     def for_request(self, shy_request):
         return self.filter(request=shy_request)
+
+    def visible_to(self, actor_role: str | None):
+        if not actor_role:
+            return self
+        if actor_role == Message.Actor.REQUESTER:
+            return self.exclude(
+                models.Q(sender=Message.Actor.REQUESTER, deleted_by_sender=True)
+                | models.Q(recipient=Message.Actor.REQUESTER, deleted_by_recipient=True)
+            )
+        if actor_role == Message.Actor.TARGET:
+            return self.exclude(
+                models.Q(sender=Message.Actor.TARGET, deleted_by_sender=True)
+                | models.Q(recipient=Message.Actor.TARGET, deleted_by_recipient=True)
+            )
+        return self
+
+    def soft_delete_for_actor(self, actor_role: str | None):
+        if not actor_role:
+            return 0
+        timestamp = timezone.now()
+        updated_count = 0
+        if actor_role == Message.Actor.REQUESTER:
+            updated_count += self.filter(
+                sender=Message.Actor.REQUESTER,
+                deleted_by_sender=False,
+            ).update(deleted_by_sender=True, sender_deleted_at=timestamp)
+            updated_count += self.filter(
+                recipient=Message.Actor.REQUESTER,
+                deleted_by_recipient=False,
+            ).update(deleted_by_recipient=True, recipient_deleted_at=timestamp)
+            return updated_count
+        if actor_role == Message.Actor.TARGET:
+            updated_count += self.filter(
+                sender=Message.Actor.TARGET,
+                deleted_by_sender=False,
+            ).update(deleted_by_sender=True, sender_deleted_at=timestamp)
+            updated_count += self.filter(
+                recipient=Message.Actor.TARGET,
+                deleted_by_recipient=False,
+            ).update(deleted_by_recipient=True, recipient_deleted_at=timestamp)
+            return updated_count
+        return 0
 
 
 class MessageBaseManager(models.Manager.from_queryset(MessageQuerySet)):
@@ -597,6 +639,10 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     body = models.TextField()
     clean_body = models.TextField(blank=True)
     is_blocked = models.BooleanField(default=False)
+    deleted_by_sender = models.BooleanField(default=False)
+    sender_deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_recipient = models.BooleanField(default=False)
+    recipient_deleted_at = models.DateTimeField(null=True, blank=True)
     objects = MessageManager()
     all_objects = MessageAllManager()
 
@@ -609,6 +655,8 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
             models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
             models.Index(fields=["is_deleted", "created_at"]),
+            models.Index(fields=["deleted_by_sender", "created_at"]),
+            models.Index(fields=["deleted_by_recipient", "created_at"]),
         ]
 
     def __str__(self):
@@ -643,6 +691,41 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
         self.is_blocked = blocked
         if blocked:
             raise ValidationError("Message contains blocked content.")
+
+    def is_visible_to(self, actor_role: str | None) -> bool:
+        if self.is_deleted:
+            return False
+        if not actor_role:
+            return True
+        if self.sender == actor_role and self.deleted_by_sender:
+            return False
+        if self.recipient == actor_role and self.deleted_by_recipient:
+            return False
+        return True
+
+    def soft_delete_for_actor(self, actor_role: str | None, *, save: bool = True):
+        if actor_role == self.sender:
+            if self.deleted_by_sender:
+                return False
+            self.deleted_by_sender = True
+            self.sender_deleted_at = timezone.now()
+            if save:
+                self.save(update_fields=["deleted_by_sender", "sender_deleted_at"])
+            return True
+        if actor_role == self.recipient:
+            if self.deleted_by_recipient:
+                return False
+            self.deleted_by_recipient = True
+            self.recipient_deleted_at = timezone.now()
+            if save:
+                self.save(update_fields=["deleted_by_recipient", "recipient_deleted_at"])
+            return True
+        return False
+
+    def delete(self, *args, actor_role: str | None = None, **kwargs):
+        if actor_role:
+            return self.soft_delete_for_actor(actor_role)
+        return self.soft_delete()
 
 
 class Notification(EmailUserResolutionModel, models.Model):

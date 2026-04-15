@@ -81,3 +81,16 @@ class ChatModelTest(TestCase):
         self.assertIn(open_request, ActiveShyRequest.objects.all())
         self.assertNotIn(closed_request, ActiveShyRequest.objects.all())
         self.assertTrue(ConversationMessage.objects.for_request(self.request).exists())
+
+    def test_message_visible_to_honors_participant_soft_delete(self):
+        message = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.REQUESTER,
+            recipient=Message.Actor.TARGET,
+            body="Hide for requester only",
+        )
+
+        message.soft_delete_for_actor(Message.Actor.REQUESTER)
+
+        self.assertFalse(Message.objects.visible_to(Message.Actor.REQUESTER).filter(id=message.id).exists())
+        self.assertTrue(Message.objects.visible_to(Message.Actor.TARGET).filter(id=message.id).exists())
