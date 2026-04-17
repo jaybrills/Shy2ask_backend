@@ -85,6 +85,7 @@ class ShyRequestAdmin(ModelAdmin):
         "participant_snapshot",
         "service_channel",
         "status_badge",
+        "is_blocked",
         "quoted_price_chf",
         "country_code",
         "created_at",

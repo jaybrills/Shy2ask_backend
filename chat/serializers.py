@@ -170,6 +170,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "direction",
             "is_sent",
             "is_received",
+            "is_blocked",
             "created_at",
             "attachments",
         ]
@@ -183,6 +184,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "direction",
             "is_sent",
             "is_received",
+            "is_blocked",
             "created_at",
             "attachments",
         ]
