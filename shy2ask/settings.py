@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_celery_beat',
     'django_celery_results',
+    'billing',
 ]
 
 MIDDLEWARE = [
@@ -233,6 +234,19 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
+
+# ── Stripe ────────────────────────────────────────────────────────────────────
+import stripe as _stripe
+
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+# Optional: a single default Price ID used when none is supplied in the request
+STRIPE_DEFAULT_PRICE_ID = env("STRIPE_DEFAULT_PRICE_ID", default="")
+
+# Initialise the stripe SDK globally so all views pick up the key automatically
+if STRIPE_SECRET_KEY:
+    _stripe.api_key = STRIPE_SECRET_KEY
 
 # ── Celery ────────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/1"
