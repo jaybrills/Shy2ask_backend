@@ -5,6 +5,7 @@ from .api_views import (
     CensorImageView,
     CensorTextView,
     FAQListView,
+    RealtimeDocumentationView,
     ShyRequestViewSet,
     SubscriptionDetailView,
     SubscriptionListCreateView,
@@ -32,5 +33,7 @@ urlpatterns = [
     path("notifications/unread/", UnreadNotificationListView.as_view()),
     path("messages/unread", UnreadNotificationListView.as_view()),
     path("messages/unread/", UnreadNotificationListView.as_view()),
+    path("realtime/docs", RealtimeDocumentationView.as_view()),
+    path("realtime/docs/", RealtimeDocumentationView.as_view()),
 ]
 urlpatterns += router.urls

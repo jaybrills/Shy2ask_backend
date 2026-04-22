@@ -90,3 +90,15 @@ class RealtimeAPITest(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.token.key}",
         )
         self.assertEqual(resp.status_code, 200)
+
+    def test_realtime_docs_are_available_for_swagger(self):
+        response = self.client.get("/api/realtime/docs/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("/ws/chat/{request_id}/", payload["chat"]["url"])
+        self.assertIn("format=json", payload["chat"]["json_url"])
+        self.assertIn("/ws/notifications/", payload["notifications"]["url"])
+
+        schema_response = self.client.get("/openapi.json")
+        self.assertEqual(schema_response.status_code, 200)
+        self.assertIn("/api/realtime/docs/", schema_response.json()["paths"])

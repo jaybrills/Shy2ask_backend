@@ -1,15 +1,22 @@
 import json
+import urllib.parse
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
 from django.template.loader import render_to_string
+from rest_framework.authtoken.models import Token
 
-from .message_service import create_message_for_request, resolve_display_name
+from .message_service import create_message_for_request
 from .models import Message, ShyRequest, Notification
+from .websocket_utils import serialize_message_for_websocket
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
-    """WebSocket consumer for real-time chat messages."""
+    """WebSocket consumer for real-time chat messages.
+
+    The default response format stays HTML for the existing HTMX chat page.
+    API/mobile clients can connect with ``?format=json`` to receive JSON events.
+    """
 
     async def connect(self):
         # Get request_id from URL route
@@ -21,18 +28,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
             
-        self.user = self.scope["user"]
+        self.user = await self.get_authenticated_user()
         self.room_group_name = f"chat_{self.request_id}"
 
-        # Get tracking code from query string (for responder access)
-        query_string = self.scope.get("query_string", b"").decode()
+        # Get tracking code from query string (for responder access).
+        self.query_params = self.get_query_params()
         self.tracking_code = None
         self.is_target = False
-        
-        if query_string:
-            import urllib.parse
-            params = urllib.parse.parse_qs(query_string)
-            self.tracking_code = params.get("tracking_code", [None])[0]
+        self.response_format = (self.query_params.get("format", ["html"])[0] or "html").lower()
+        self.response_format = "json" if self.response_format in {"json", "api"} else "html"
+        self.tracking_code = self.query_params.get("tracking_code", [None])[0]
 
         request = await self.get_request(self.request_id)
         if not request:
@@ -78,28 +83,36 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     async def receive(self, text_data):
-        """Receive message from WebSocket. Accept { body, alias } – alias is display name for this request/conversation."""
+        """Receive message from WebSocket.
+
+        Accepts {body, alias, reply_to_id}. HTMX clients may include extra form
+        fields; JSON clients may send type="chat.message" or "chat_message".
+        """
         try:
             data = json.loads(text_data)
             body = None
             alias = (data.get("alias") or "").strip() or None
+            reply_to_id = data.get("reply_to_id")
+            message_type = data.get("type")
+
+            if message_type == "ping":
+                await self.send_json_event({"type": "pong"})
+                return
 
             if "body" in data:
                 body = str(data["body"]).strip()
             if not body:
                 for key, value in data.items():
-                    if key not in ("HEADERS", "alias") and isinstance(value, str) and value.strip():
+                    if key not in ("HEADERS", "alias", "type") and isinstance(value, str) and value.strip():
                         body = value.strip()
                         break
             if not body:
-                message_type = data.get("type")
-                if message_type == "chat_message":
+                if message_type in {"chat_message", "chat.message"}:
                     body = data.get("body", "").strip()
 
             if body:
-                message_data = await self.create_message(body, self.user, alias=alias)
+                message_data = await self.create_message(body, self.user, alias=alias, reply_to_id=reply_to_id)
                 if message_data:
-                    print(f"Message created successfully: ID={message_data.get('id')}")
                     # Send message to room group
                     await self.channel_layer.group_send(
                         self.room_group_name,
@@ -109,21 +122,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         }
                     )
                 else:
-                    print("ERROR: Failed to create message in database")
+                    await self.send_error("Unable to create message.")
             else:
-                print(f"WARNING: No body found in data. Full data: {data}")
+                await self.send_error("Message body is required.")
 
         except json.JSONDecodeError as e:
-            print(f"ERROR: JSON decode error: {e}")
-            print(f"Raw text_data (first 200 chars): {text_data[:200]}")
+            await self.send_error(f"Invalid JSON: {e.msg}")
         except Exception as e:
             print(f"ERROR in receive: {e}")
             import traceback
             traceback.print_exc()
+            await self.send_error("Unexpected WebSocket error.")
 
     async def chat_message(self, event):
         """Receive message from room group."""
-        message = event["message"]
+        message = self.with_viewer_fields(event["message"])
+        if self.response_format == "json":
+            await self.send_json_event({"type": "chat.message", "message": message})
+            return
+
         # Render HTML message for HTMX
         html_message = await self.render_message_html(message)
         # Send HTML message with hx-swap-oob for HTMX
@@ -132,6 +149,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def send_recent_messages(self):
         """Send recent messages to the client."""
         messages = await self.get_recent_messages()
+        if self.response_format == "json":
+            request_data = await self.get_request_summary()
+            await self.send_json_event({
+                "type": "chat.history",
+                "request": request_data,
+                "viewer": {
+                    "role": Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER,
+                    "label": "Target" if self.is_target else "Requester",
+                },
+                "messages": [self.with_viewer_fields(message) for message in messages],
+            })
+            return
+
         # Render all messages as HTML for HTMX
         html_messages = []
         for msg in messages:
@@ -163,24 +193,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             ).order_by("-created_at")[:50]
             out = []
             for msg in reversed(messages):
-                display_name = resolve_display_name(msg)
-                out.append({
-                    "id": msg.id,
-                    "body": msg.clean_body or msg.body,
-                    "sender": msg.sender,
-                    "sender_display": msg.get_sender_display(),
-                    "display_name": display_name,
-                    "is_blocked": msg.is_blocked,
-                    "created_at": msg.created_at.isoformat(),
-                    "created_at_display": msg.created_at.strftime("%b %d, %H:%M"),
-                })
+                out.append(serialize_message_for_websocket(msg))
             return out
         except Exception as e:
             print(f"Error getting recent messages: {e}")
             return []
 
     @database_sync_to_async
-    def create_message(self, body, user, alias=None):
+    def create_message(self, body, user, alias=None, reply_to_id=None):
         """Create a new message. alias = display name for this message (request-wise); else use profile/request default."""
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
@@ -191,25 +211,73 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     user=user,
                     tracking_code=self.tracking_code if self.is_target else None,
                     alias=alias,
+                    reply_to_id=reply_to_id,
                 )
             except Exception:
                 return None
 
-            return {
-                "id": message.id,
-                "body": message.clean_body or message.body,
-                "sender": message.sender,
-                "sender_display": message.get_sender_display(),
-                "display_name": resolve_display_name(message),
-                "is_blocked": message.is_blocked,
-                "created_at": message.created_at.isoformat(),
-                "created_at_display": message.created_at.strftime("%b %d, %H:%M"),
-            }
+            return serialize_message_for_websocket(message)
         except Exception as e:
             print(f"Error creating message: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    @database_sync_to_async
+    def get_request_summary(self):
+        request = ShyRequest.objects.get(pk=self.request_id)
+        return {
+            "id": request.id,
+            "tracking_code": request.tracking_code,
+            "status": request.status,
+            "service_channel": request.service_channel,
+            "description": request.description,
+            "created_at": request.created_at.isoformat(),
+        }
+
+    def get_query_params(self):
+        query_string = self.scope.get("query_string", b"").decode()
+        return urllib.parse.parse_qs(query_string)
+
+    async def get_authenticated_user(self):
+        user = self.scope["user"]
+        if not isinstance(user, AnonymousUser):
+            return user
+
+        params = self.get_query_params()
+        token_key = (params.get("token") or params.get("access_token") or [None])[0]
+        if not token_key:
+            headers = dict(self.scope.get("headers") or [])
+            auth_header = headers.get(b"authorization", b"").decode()
+            if auth_header.lower().startswith("bearer "):
+                token_key = auth_header.split(" ", 1)[1].strip()
+        if not token_key:
+            return user
+        return await self.get_user_by_token(token_key) or user
+
+    @database_sync_to_async
+    def get_user_by_token(self, token_key):
+        token = Token.objects.select_related("user").filter(key=token_key).first()
+        return token.user if token else None
+
+    def with_viewer_fields(self, message):
+        viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
+        message = dict(message)
+        message["direction"] = "outbound" if message.get("sender") == viewer_role else "inbound"
+        message["is_mine"] = message.get("sender") == viewer_role
+        message["sender_role"] = message.get("sender")
+        message["recipient_role"] = message.get("recipient")
+        message["sender_label"] = "Requester" if message.get("sender") == Message.Actor.REQUESTER else "Target"
+        message["recipient_label"] = "Requester" if message.get("recipient") == Message.Actor.REQUESTER else "Target"
+        return message
+
+    async def send_json_event(self, payload):
+        if self.response_format == "json":
+            await self.send(text_data=json.dumps(payload))
+
+    async def send_error(self, detail):
+        if self.response_format == "json":
+            await self.send_json_event({"type": "error", "detail": detail})
 
     @database_sync_to_async
     def render_message_html(self, message):
@@ -219,7 +287,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "chat/message_fragment.html",
             {
                 "message_id": message.get("id"),
-                "message_body": message.get("body", ""),
+                "message_body": message.get("clean_body") or message.get("body", ""),
                 "display_name": message.get("display_name", ""),
                 "is_requester": is_requester,
                 "is_blocked": message.get("is_blocked", False),
@@ -231,7 +299,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for real-time notifications."""
 
     async def connect(self):
-        self.user = self.scope["user"]
+        self.user = await self.get_authenticated_user()
         self.user_id = self.user.id if not isinstance(self.user, AnonymousUser) else None
 
         if isinstance(self.user, AnonymousUser):
@@ -331,3 +399,28 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             pass
         except Exception as e:
             print(f"Error marking notification read: {e}")
+
+    def get_query_params(self):
+        query_string = self.scope.get("query_string", b"").decode()
+        return urllib.parse.parse_qs(query_string)
+
+    async def get_authenticated_user(self):
+        user = self.scope["user"]
+        if not isinstance(user, AnonymousUser):
+            return user
+
+        params = self.get_query_params()
+        token_key = (params.get("token") or params.get("access_token") or [None])[0]
+        if not token_key:
+            headers = dict(self.scope.get("headers") or [])
+            auth_header = headers.get(b"authorization", b"").decode()
+            if auth_header.lower().startswith("bearer "):
+                token_key = auth_header.split(" ", 1)[1].strip()
+        if not token_key:
+            return user
+        return await self.get_user_by_token(token_key) or user
+
+    @database_sync_to_async
+    def get_user_by_token(self, token_key):
+        token = Token.objects.select_related("user").filter(key=token_key).first()
+        return token.user if token else None

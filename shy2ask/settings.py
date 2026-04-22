@@ -230,7 +230,11 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Shy2Ask API",
-    "DESCRIPTION": "Live OpenAPI schema for the Shy2Ask backend.",
+    "DESCRIPTION": (
+        "Live OpenAPI schema for the Shy2Ask backend. Realtime chat and "
+        "notifications are available over WebSockets; see the Realtime tag "
+        "or GET /api/realtime/docs/ for connection URLs, auth rules, and JSON event shapes."
+    ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }

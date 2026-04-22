@@ -33,6 +33,7 @@ Use these URLs in the browser to explore and test the API.
 2. You’ll see all endpoints: **Auth**, **Profile**, **Censor**.
 3. Click an endpoint → **Try it out** → fill body/params → **Execute**.
 4. For **Profile** endpoints, get a token from **POST /auth/login**, then click **Authorize** (top right), enter `Bearer <your_token>`, and call the endpoints.
+5. For realtime chat/notification docs, open the **Realtime** tag and call **GET `/api/realtime/docs/`**. Swagger cannot open a WebSocket, but it lists the socket URLs, auth options, and JSON event shapes.
 
 ---
 
@@ -44,6 +45,9 @@ Use these URLs in the browser to explore and test the API.
 | Auth | Bearer token from `POST /auth/login` or `POST /auth/register` |
 | Auth header | `Authorization: Bearer <token>` |
 | Censor (no auth) | `POST /censor/text` (JSON body), `POST /censor/image` (multipart file) |
+| Realtime docs | `GET /api/realtime/docs/` in Swagger |
+| Chat WebSocket | `ws://host/ws/chat/{request_id}/?format=json` |
+| Notification WebSocket | `ws://host/ws/notifications/?token=<token>` |
 | OpenAPI spec | Fetch `/openapi.json` for codegen or API clients |
 
 ---

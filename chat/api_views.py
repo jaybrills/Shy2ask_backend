@@ -18,6 +18,7 @@ from .message_service import (
     can_access_conversation,
     create_message_for_request,
 )
+from .websocket_utils import send_chat_message_websocket, serialize_message_for_websocket
 from account.api_views import BearerTokenAuthentication
 from .serializers import (
     BulkSoftDeleteSerializer,
@@ -36,6 +37,11 @@ from .serializers import (
     SupportTicketReplySerializer,
     SupportTicketSerializer,
 )
+
+
+def broadcast_chat_message(message):
+    """Publish REST-created messages to connected chat WebSocket clients."""
+    send_chat_message_websocket(message.request_id, serialize_message_for_websocket(message))
 
 
 class ShyRequestViewSet(viewsets.ModelViewSet):
@@ -196,6 +202,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
+        broadcast_chat_message(msg)
         return Response(self._message_response(request, shy_request, msg, tracking_code=tracking_code), status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
@@ -302,6 +309,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
+        broadcast_chat_message(msg)
         return Response(
             {
                 "request_id": shy_request.id,
@@ -572,4 +580,79 @@ class UnreadNotificationListView(APIView):
                 }
                 for notification in notifications
             ]
+        )
+
+
+class RealtimeDocumentationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        tags=["Realtime"],
+        operation_id="realtime_websocket_contract",
+        summary="Realtime WebSocket contract",
+        description=(
+            "Documentation-only endpoint for the WebSocket protocol. Swagger/OpenAPI "
+            "cannot execute WebSocket handshakes, but this response gives frontend "
+            "clients the live chat and notification socket URLs, auth rules, and JSON event shapes."
+        ),
+        responses=inline_serializer(
+            name="RealtimeDocumentation",
+            fields={
+                "chat": serializers.DictField(),
+                "notifications": serializers.DictField(),
+                "notes": serializers.ListField(child=serializers.CharField()),
+            },
+        ),
+    )
+    def get(self, request):
+        base = request.build_absolute_uri("/").rstrip("/")
+        ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+        return Response(
+            {
+                "chat": {
+                    "url": f"{ws_base}/ws/chat/{{request_id}}/",
+                    "json_url": f"{ws_base}/ws/chat/{{request_id}}/?format=json",
+                    "requester_auth": "Use logged-in session cookies, Authorization: Bearer <token>, or ?token=<token>.",
+                    "responder_auth": "Use ?tracking_code=<tracking_code>. Add &format=json for JSON events.",
+                    "send": {
+                        "type": "chat.message",
+                        "body": "Hello from the realtime client",
+                        "alias": "OptionalDisplayName",
+                        "reply_to_id": 123,
+                    },
+                    "history_event": {
+                        "type": "chat.history",
+                        "request": {"id": 123, "tracking_code": "ABC123", "status": "submitted"},
+                        "viewer": {"role": "requester", "label": "Requester"},
+                        "messages": [],
+                    },
+                    "message_event": {
+                        "type": "chat.message",
+                        "message": {
+                            "id": 1,
+                            "request_id": 123,
+                            "sender": "requester",
+                            "recipient": "target",
+                            "display_name": "OptionalDisplayName",
+                            "body": "Hello",
+                            "clean_body": "Hello",
+                            "direction": "outbound",
+                            "is_mine": True,
+                            "created_at": "2026-04-22T10:00:00+00:00",
+                        },
+                    },
+                },
+                "notifications": {
+                    "url": f"{ws_base}/ws/notifications/",
+                    "token_url": f"{ws_base}/ws/notifications/?token=<token>",
+                    "auth": "Logged-in user only. Use session cookies, Authorization: Bearer <token>, or ?token=<token>.",
+                    "events": ["unread_notifications", "notification"],
+                    "send_mark_read": {"type": "mark_read", "notification_id": 1},
+                },
+                "notes": [
+                    "Use ws:// for HTTP and wss:// for HTTPS.",
+                    "REST-created messages are broadcast to connected chat clients.",
+                    "The default chat socket response is HTML for the existing HTMX page; pass ?format=json for API/mobile clients.",
+                ],
+            }
         )

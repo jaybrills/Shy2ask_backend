@@ -522,17 +522,102 @@ Use **ws://** on HTTP and **wss://** on HTTPS (same path). Example: `wss://yourd
 |--------|-----|----------------|
 | **Chat (conversation)** | `ws://host/ws/chat/<request_id>/` or `wss://host/ws/chat/<request_id>/` | Requester: logged-in owner of request. Responder: `?tracking_code=XXX`. |
 | **Notifications** | `ws://host/ws/notifications/` or `wss://host/ws/notifications/` | Logged-in user only. |
+| **Swagger realtime doc** | `/api/realtime/docs/` | No auth; documentation-only endpoint visible in `/swagger/`. |
 
 ### Chat WebSocket
 
-- **Connect:** `ws://localhost:8000/ws/chat/<request_id>/` (requester) or `ws://localhost:8000/ws/chat/<request_id>/?tracking_code=ABC123` (responder).
+- **Connect HTML/HTMX:** `ws://localhost:8000/ws/chat/<request_id>/` (requester) or `ws://localhost:8000/ws/chat/<request_id>/?tracking_code=ABC123` (responder).
+- **Connect JSON/API:** `ws://localhost:8000/ws/chat/<request_id>/?format=json`.
+- **Requester auth:** logged-in session cookie, `Authorization: Bearer <token>` header for native clients, or `?token=<token>` for browser clients.
+- **Responder auth:** `?tracking_code=ABC123&format=json`.
 - **Send message (JSON):**
   - `body` (required): message text.
   - `alias` (optional): display name for this request/conversation. If omitted, profile `alias_name` or request `requester_alias` or `requester_name` is used.
+  - `reply_to_id` (optional): parent message id.
 ```json
-{"body": "Hello!", "alias": "MyNick"}
+{
+  "type": "chat.message",
+  "body": "Hello!",
+  "alias": "MyNick",
+  "reply_to_id": 123
+}
 ```
-- **Receive:** server sends HTML fragments (HTMX OOB) or message payloads; each includes `display_name` (alias or default).
+- **Receive HTML default:** server sends HTML fragments (HTMX OOB) for the existing Django template chat.
+- **Receive JSON history event:** sent once after connect when `format=json`.
+```json
+{
+  "type": "chat.history",
+  "request": {
+    "id": 123,
+    "tracking_code": "ABC123",
+    "status": "submitted",
+    "service_channel": "email",
+    "description": "Request description",
+    "created_at": "2026-04-22T10:00:00+00:00"
+  },
+  "viewer": {
+    "role": "requester",
+    "label": "Requester"
+  },
+  "messages": []
+}
+```
+- **Receive JSON message event:** sent for new WebSocket messages and messages created by REST endpoints.
+```json
+{
+  "type": "chat.message",
+  "message": {
+    "id": 1,
+    "request_id": 123,
+    "reply_to_id": null,
+    "message_kind": "reply",
+    "sender": "requester",
+    "recipient": "target",
+    "sender_display_name": "MyNick",
+    "recipient_display_name": "Jane",
+    "display_name": "MyNick",
+    "recipient_name": "Jane",
+    "body": "Hello!",
+    "clean_body": "Hello!",
+    "is_blocked": false,
+    "direction": "outbound",
+    "is_mine": true,
+    "created_at": "2026-04-22T10:00:00+00:00",
+    "created_at_display": "Apr 22, 10:00"
+  }
+}
+```
+- **Errors:** JSON clients receive `{"type": "error", "detail": "..."}`.
+- **Ping:** JSON clients may send `{"type": "ping"}` and receive `{"type": "pong"}`.
+
+### Notification WebSocket
+
+- **Connect:** `ws://localhost:8000/ws/notifications/?token=<token>` or authenticated session.
+- **Receive unread notifications on connect:**
+```json
+{
+  "type": "unread_notifications",
+  "notifications": []
+}
+```
+- **Receive new notification:**
+```json
+{
+  "type": "notification",
+  "notification": {
+    "id": 1,
+    "subject": "New reply",
+    "body": "Target replied to your request ABC123",
+    "request_id": 123,
+    "tracking_code": "ABC123",
+    "created_at": "2026-04-22T10:00:00+00:00"
+  }
+}
+```
+- **Mark read:**
+```json
+{"type": "mark_read", "notification_id": 1}
+```
 
 ---
 

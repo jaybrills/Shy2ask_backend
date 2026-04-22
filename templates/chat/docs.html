@@ -171,6 +171,39 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="mt-4 bg-gray-900 rounded-lg p-4 font-mono text-sm text-white space-y-2">
+                            <p>Swagger realtime contract: GET /api/realtime/docs/</p>
+                            <p>JSON chat: ws://host/ws/chat/{request_id}/?format=json</p>
+                            <p>Requester token auth: ?token={token}</p>
+                            <p>Responder tracking auth: ?tracking_code={tracking_code}&amp;format=json</p>
+                            <p>Notifications: ws://host/ws/notifications/?token={token}</p>
+                        </div>
+                        <div class="mt-4 bg-amber-50 border-2 border-black rounded-lg p-4 text-sm text-gray-700 space-y-2">
+                            <p><strong>Send chat JSON:</strong></p>
+                            <pre class="whitespace-pre-wrap overflow-x-auto"><code>{
+  "type": "chat.message",
+  "body": "Hello from the realtime client",
+  "alias": "OptionalDisplayName",
+  "reply_to_id": 123
+}</code></pre>
+                            <p><strong>Receive chat JSON:</strong></p>
+                            <pre class="whitespace-pre-wrap overflow-x-auto"><code>{
+  "type": "chat.message",
+  "message": {
+    "id": 1,
+    "request_id": 123,
+    "sender": "requester",
+    "recipient": "target",
+    "display_name": "OptionalDisplayName",
+    "body": "Hello",
+    "clean_body": "Hello",
+    "direction": "outbound",
+    "is_mine": true,
+    "created_at": "2026-04-22T10:00:00+00:00"
+  }
+}</code></pre>
+                            <p>Messages created through the REST endpoints are also broadcast to connected chat clients.</p>
+                        </div>
                     </section>
 
                     <section id="security" class="pt-8 border-t-4 border-black pb-8">
