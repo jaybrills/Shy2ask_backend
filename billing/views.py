@@ -9,26 +9,29 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from datetime import timezone as t
 from account.api_views import BearerTokenAuthentication
 
 from .models import StripeCustomer, StripeEvent, StripePlan, StripeSubscription
 from .serializers import (
+    BillingConfigSerializer,
+    CancelSubscriptionSerializer,
     CheckoutSessionResponseSerializer,
     CreateCheckoutSessionSerializer,
     CustomerPortalResponseSerializer,
     CustomerPortalSerializer,
     EnrollFreePlanSerializer,
+    InvoiceSerializer,
+    MobileSubscribeResponseSerializer,
+    MobileSubscribeSerializer,
+    PaymentMethodSerializer,
+    PaymentSheetResponseSerializer,
     StripePlanSerializer,
     StripeSubscriptionSerializer,
 )
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _get_or_create_stripe_customer(user) -> str:
     """Return the Stripe customer ID for *user*, creating one if needed."""
@@ -72,28 +75,28 @@ def _sync_subscription_from_stripe(stripe_sub, user=None):
                 "No StripeCustomer found for customer %s", stripe_sub["customer"]
             )
             return None
-
+    
     period_start = (
         timezone.datetime.fromtimestamp(
-            stripe_sub["current_period_start"], tz=timezone.utc
+            stripe_sub["current_period_start"], tz=t.utc
         )
         if stripe_sub.get("current_period_start")
         else None
     )
     period_end = (
         timezone.datetime.fromtimestamp(
-            stripe_sub["current_period_end"], tz=timezone.utc
+            stripe_sub["current_period_end"], tz=t.utc
         )
         if stripe_sub.get("current_period_end")
         else None
     )
     trial_end = (
-        timezone.datetime.fromtimestamp(stripe_sub["trial_end"], tz=timezone.utc)
+        timezone.datetime.fromtimestamp(stripe_sub["trial_end"], tz=t.utc)
         if stripe_sub.get("trial_end")
         else None
     )
     canceled_at = (
-        timezone.datetime.fromtimestamp(stripe_sub["canceled_at"], tz=timezone.utc)
+        timezone.datetime.fromtimestamp(stripe_sub["canceled_at"], tz=t.utc)
         if stripe_sub.get("canceled_at")
         else None
     )
@@ -114,10 +117,6 @@ def _sync_subscription_from_stripe(stripe_sub, user=None):
     )
     return obj
 
-
-# ---------------------------------------------------------------------------
-# Views
-# ---------------------------------------------------------------------------
 
 class PlanListView(APIView):
     """List all active subscription plans."""
@@ -288,7 +287,7 @@ class StripeWebhookView(APIView):
         # Verify signature
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        except stripe.errors.SignatureVerificationError as exc:
+        except stripe.error.SignatureVerificationError as exc:
             logger.warning("Stripe webhook signature verification failed: %s", exc)
             return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
@@ -489,3 +488,461 @@ class EnrollFreePlanView(APIView):
             StripeSubscriptionSerializer(sub).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+# ── React Native / Mobile SDK views ──────────────────────────────────────────
+
+class BillingConfigView(APIView):
+    """Return the Stripe publishable key for SDK initialisation."""
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        summary="Get Stripe publishable key",
+        responses={200: BillingConfigSerializer},
+    )
+    def get(self, request):
+        return Response(
+            {"publishable_key": getattr(settings, "STRIPE_PUBLISHABLE_KEY", "")},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PaymentSheetView(APIView):
+    """
+    Initialise a Stripe Payment Sheet for saving a payment method.
+
+    Returns the three values required by the React Native
+    `initPaymentSheet({ customerId, customerEphemeralKeySecret,
+    setupIntentClientSecret })` call.
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    # Stripe API version expected by the React Native SDK
+    _STRIPE_API_VERSION = "2024-06-20"
+
+    @extend_schema(
+        summary="Initialise Payment Sheet (mobile)",
+        responses={200: PaymentSheetResponseSerializer},
+    )
+    def post(self, request):
+        try:
+            customer_id = _get_or_create_stripe_customer(request.user)
+
+            ephemeral_key = stripe.EphemeralKey.create(
+                customer=customer_id,
+                stripe_version=self._STRIPE_API_VERSION,
+            )
+
+            setup_intent = stripe.SetupIntent.create(
+                customer=customer_id,
+                payment_method_types=["card"],
+                metadata={"user_id": str(request.user.pk)},
+            )
+        except stripe.StripeError as exc:
+            logger.error("PaymentSheet init failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return Response(
+            {
+                "customer_id": customer_id,
+                "ephemeral_key_secret": ephemeral_key.secret,
+                "setup_intent_client_secret": setup_intent.client_secret,
+                "publishable_key": getattr(settings, "STRIPE_PUBLISHABLE_KEY", ""),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MobileSubscribeView(APIView):
+    """
+    Create a Stripe subscription and return a client_secret for the mobile SDK.
+
+    Handles three scenarios automatically:
+      1. Paid subscription, bills immediately → returns PaymentIntent client_secret
+      2. Paid subscription, bills in future (custom billing cycle) / trial
+         → returns SetupIntent client_secret (saves card for auto-charge)
+      3. $0 / fully credited → returns null (no payment needed)
+
+    Response always includes `intent_type`:
+      - "payment" → frontend uses `paymentIntentClientSecret` in initPaymentSheet
+      - "setup"   → frontend uses `setupIntentClientSecret` in initPaymentSheet
+      - null      → subscription already active, no Payment Sheet needed
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Subscribe to a plan (mobile)",
+        request=MobileSubscribeSerializer,
+        responses={200: MobileSubscribeResponseSerializer, 201: MobileSubscribeResponseSerializer},
+    )
+    def post(self, request):
+        serializer = MobileSubscribeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        price_id = serializer.validated_data["price_id"]
+
+        # ── Validate plan ────────────────────────────────────────────────────
+        plan = StripePlan.objects.filter(stripe_price_id=price_id, is_active=True).first()
+        if not plan:
+            return Response(
+                {"detail": "No active plan found for that price_id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if plan.is_free:
+            return Response(
+                {"detail": "This is a free plan. Use POST /api/billing/free/ to enroll."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Create subscription ──────────────────────────────────────────────
+        try:
+            customer_id = _get_or_create_stripe_customer(request.user)
+
+            stripe_sub = stripe.Subscription.create(
+                customer=customer_id,
+                items=[{"price": price_id}],
+                payment_behavior="default_incomplete",
+                payment_settings={"save_default_payment_method": "on_subscription"},
+                expand=[
+                    "latest_invoice.payment_intent",
+                    "latest_invoice.confirmation_secret",
+                    "pending_setup_intent",
+                ],
+                metadata={"user_id": str(request.user.pk)},
+            )
+        except stripe.StripeError as exc:
+            logger.error("Mobile subscribe failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Persist locally before any fallback API calls
+        _sync_subscription_from_stripe(stripe_sub, user=request.user)
+
+        # ── Resolve a usable client_secret ───────────────────────────────────
+        client_secret, intent_type = self._resolve_client_secret(
+            stripe_sub=stripe_sub,
+            customer_id=customer_id,
+            price_id=price_id,
+            user_pk=request.user.pk,
+        )
+
+        if not client_secret:
+            # Truly no payment required (already active, fully credited, etc.)
+            return Response(
+                {
+                    "subscription_id": stripe_sub.id,
+                    "client_secret": None,
+                    "intent_type": None,
+                    "status": stripe_sub.status,
+                    "detail": "No payment required. Subscription is already active or fully credited.",
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(
+            {
+                "subscription_id": stripe_sub.id,
+                "client_secret": client_secret,
+                "intent_type": intent_type,  # "payment" or "setup"
+                "status": stripe_sub.status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Helper: multi-strategy client_secret resolver                       #
+    # ------------------------------------------------------------------ #
+    def _resolve_client_secret(self, stripe_sub, customer_id, price_id, user_pk):
+        """
+        Try 4 strategies in order:
+          1. latest_invoice.confirmation_secret  (Stripe API 2024-12+)
+          2. latest_invoice.payment_intent.client_secret  (classic)
+          3. subscription.pending_setup_intent.client_secret  (trials / future billing)
+          4. Create a fresh SetupIntent  (last-resort fallback)
+
+        Returns (client_secret, intent_type) or (None, None).
+        """
+
+        # ── Strategy 1 & 2: latest_invoice ──────────────────────────────────
+        latest_invoice = self._get_attr(stripe_sub, "latest_invoice")
+
+        if isinstance(latest_invoice, str):
+            # Bare ID — fetch the full object
+            try:
+                latest_invoice = stripe.Invoice.retrieve(
+                    latest_invoice,
+                    expand=["payment_intent", "confirmation_secret"],
+                )
+            except stripe.StripeError as exc:
+                logger.warning("Failed to retrieve invoice: %s", exc)
+                latest_invoice = None
+
+        if latest_invoice:
+            # Strategy 1: confirmation_secret (newer API, object with client_secret+type)
+            confirmation_secret = self._get_attr(latest_invoice, "confirmation_secret")
+            if confirmation_secret:
+                cs = self._get_attr(confirmation_secret, "client_secret")
+                ctype = self._get_attr(confirmation_secret, "type") or "payment_intent"
+                if cs:
+                    intent_type = "setup" if ctype == "setup_intent" else "payment"
+                    logger.info("Using confirmation_secret for subscription %s", stripe_sub.id)
+                    return cs, intent_type
+
+            # Strategy 2: classic payment_intent on the invoice
+            payment_intent = self._get_attr(latest_invoice, "payment_intent")
+            if isinstance(payment_intent, str):
+                try:
+                    payment_intent = stripe.PaymentIntent.retrieve(payment_intent)
+                except stripe.StripeError as exc:
+                    logger.warning("Failed to retrieve PaymentIntent: %s", exc)
+                    payment_intent = None
+            if payment_intent:
+                cs = self._get_attr(payment_intent, "client_secret")
+                if cs:
+                    logger.info("Using invoice.payment_intent for subscription %s", stripe_sub.id)
+                    return cs, "payment"
+
+        # ── Strategy 3: pending_setup_intent (trials / future billing) ──────
+        pending_setup_intent = self._get_attr(stripe_sub, "pending_setup_intent")
+        if isinstance(pending_setup_intent, str):
+            try:
+                pending_setup_intent = stripe.SetupIntent.retrieve(pending_setup_intent)
+            except stripe.StripeError as exc:
+                logger.warning("Failed to retrieve pending SetupIntent: %s", exc)
+                pending_setup_intent = None
+        if pending_setup_intent:
+            cs = self._get_attr(pending_setup_intent, "client_secret")
+            if cs:
+                logger.info("Using pending_setup_intent for subscription %s", stripe_sub.id)
+                return cs, "setup"
+
+        # ── Strategy 4: Create a fresh SetupIntent as a last resort ─────────
+        # This covers products with a custom future billing_cycle_anchor,
+        # where Stripe doesn't generate the invoice until the anchor date.
+        # The saved card will be used to auto-charge when billing starts.
+        try:
+            setup_intent = stripe.SetupIntent.create(
+                customer=customer_id,
+                payment_method_types=["card"],
+                usage="off_session",  # for recurring off-session charges
+                metadata={
+                    "subscription_id": stripe_sub.id,
+                    "price_id": price_id,
+                    "user_id": str(user_pk),
+                },
+            )
+            logger.info("Fallback SetupIntent %s created for subscription %s",
+                        setup_intent.id, stripe_sub.id)
+            return setup_intent.client_secret, "setup"
+        except stripe.StripeError as exc:
+            logger.error("Fallback SetupIntent creation failed: %s", exc)
+            return None, None
+
+    @staticmethod
+    def _get_attr(obj, key):
+        """Stripe SDK v12 objects support both attribute and dict access, but
+        defensively try both in case of version differences."""
+        if obj is None:
+            return None
+        if hasattr(obj, key) and getattr(obj, key) is not None:
+            return getattr(obj, key)
+        if hasattr(obj, "get"):
+            try:
+                return obj.get(key)
+            except Exception:
+                return None
+        return None
+
+
+
+class CancelSubscriptionView(APIView):
+    """
+    Cancel the authenticated user's active subscription without requiring a
+    browser redirect to the Stripe portal.
+
+    Pass `{ "immediately": true }` to cancel right now; omit or set false to
+    cancel at the end of the current billing period.
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Cancel subscription (mobile)",
+        request=CancelSubscriptionSerializer,
+        responses={200: StripeSubscriptionSerializer},
+    )
+    def post(self, request):
+        serializer = CancelSubscriptionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        immediately = serializer.validated_data.get("immediately", False)
+
+        sub = (
+            StripeSubscription.objects.filter(
+                user=request.user,
+                status__in=[
+                    StripeSubscription.Status.ACTIVE,
+                    StripeSubscription.Status.TRIALING,
+                    StripeSubscription.Status.PAST_DUE,
+                ],
+                stripe_subscription_id__isnull=False,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not sub:
+            return Response(
+                {"detail": "No cancellable paid subscription found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            if immediately:
+                stripe_sub = stripe.Subscription.cancel(sub.stripe_subscription_id)
+            else:
+                stripe_sub = stripe.Subscription.modify(
+                    sub.stripe_subscription_id,
+                    cancel_at_period_end=True,
+                )
+        except stripe.StripeError as exc:
+            logger.error("Subscription cancellation failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        updated_sub = _sync_subscription_from_stripe(stripe_sub, user=request.user)
+        return Response(StripeSubscriptionSerializer(updated_sub).data, status=status.HTTP_200_OK)
+
+
+class PaymentMethodListView(APIView):
+    """
+    List the authenticated user's saved payment methods (cards).
+
+    Marks the default payment method (attached to the Stripe customer) as
+    `is_default: true`.
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="List saved payment methods (mobile)",
+        responses={200: PaymentMethodSerializer(many=True)},
+    )
+    def get(self, request):
+        try:
+            customer_id = _get_or_create_stripe_customer(request.user)
+
+            # Fetch customer to get the default payment method
+            stripe_customer = stripe.Customer.retrieve(customer_id)
+            default_pm_id = (
+                stripe_customer.get("invoice_settings", {}).get("default_payment_method")
+                or stripe_customer.get("default_source")
+            )
+
+            payment_methods = stripe.PaymentMethod.list(
+                customer=customer_id,
+                type="card",
+            )
+        except stripe.StripeError as exc:
+            logger.error("List payment methods failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        results = []
+        for pm in payment_methods.data:
+            card = pm.get("card") or {}
+            results.append(
+                {
+                    "id": pm["id"],
+                    "type": pm["type"],
+                    "card": {
+                        "brand": card.get("brand", ""),
+                        "last4": card.get("last4", ""),
+                        "exp_month": card.get("exp_month", 0),
+                        "exp_year": card.get("exp_year", 0),
+                    } if card else None,
+                    "is_default": pm["id"] == default_pm_id,
+                    "created": pm["created"],
+                }
+            )
+
+        return Response(results, status=status.HTTP_200_OK)
+
+
+class PaymentMethodDeleteView(APIView):
+    """
+    Detach a payment method from the authenticated user's Stripe customer.
+
+    Returns 204 on success.
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Remove a saved payment method (mobile)",
+        responses={204: None, 403: None, 404: None},
+    )
+    def delete(self, request, pm_id: str):
+        try:
+            customer_id = _get_or_create_stripe_customer(request.user)
+
+            pm = stripe.PaymentMethod.retrieve(pm_id)
+            if pm.get("customer") != customer_id:
+                return Response(
+                    {"detail": "Payment method does not belong to this user."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            stripe.PaymentMethod.detach(pm_id)
+        except stripe.StripeError as exc:
+            logger.error("Detach payment method failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InvoiceListView(APIView):
+    """
+    List the authenticated user's Stripe invoices (most recent first).
+
+    Each invoice includes a `invoice_pdf` link for download and a
+    `hosted_invoice_url` for viewing in a browser/web view.
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="List invoices (mobile)",
+        responses={200: InvoiceSerializer(many=True)},
+    )
+    def get(self, request):
+        try:
+            customer_id = _get_or_create_stripe_customer(request.user)
+
+            invoices = stripe.Invoice.list(customer=customer_id, limit=24)
+        except stripe.StripeError as exc:
+            logger.error("List invoices failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        results = [
+            {
+                "id": inv["id"],
+                "amount_due": inv["amount_due"],
+                "amount_paid": inv["amount_paid"],
+                "currency": inv["currency"],
+                "status": inv["status"],
+                "created": inv["created"],
+                "invoice_pdf": inv.get("invoice_pdf"),
+                "hosted_invoice_url": inv.get("hosted_invoice_url"),
+                "period_start": inv.get("period_start") or 0,
+                "period_end": inv.get("period_end") or 0,
+            }
+            for inv in invoices.data
+        ]
+
+        return Response(results, status=status.HTTP_200_OK)
