@@ -198,14 +198,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 ALLOWED_COUNTRY_CODE = "CH"
 COUNTRY_HEADER = "HTTP_X_COUNTRY_CODE"
 
-# Email (from env; SMTP for production)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.office365.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "info@doappointment.com"
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")  # use normal password if 2FA off, else app password
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# Email — shared GoDaddy SMTP host, three purpose-specific accounts
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", default="sxb1plzcpnl506118.prod.sxb1.secureserver.net")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=False)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+
+# Account / auth emails (info@shy2ask.com)
+EMAIL_INFO_USER = env("EMAIL_INFO_USER", default="info@shy2ask.com")
+EMAIL_INFO_PASSWORD = env("EMAIL_INFO_PASSWORD", default="")
+
+# Chat / request emails (request@shy2ask.com)
+EMAIL_REQUEST_USER = env("EMAIL_REQUEST_USER", default="request@shy2ask.com")
+EMAIL_REQUEST_PASSWORD = env("EMAIL_REQUEST_PASSWORD", default="")
+
+# Support ticket emails (support@shy2ask.com)
+EMAIL_SUPPORT_USER = env("EMAIL_SUPPORT_USER", default="support@shy2ask.com")
+EMAIL_SUPPORT_PASSWORD = env("EMAIL_SUPPORT_PASSWORD", default="")
+
+DEFAULT_FROM_EMAIL = EMAIL_INFO_USER
 
 # Censor engine: our model first, then AI (OpenAI preferred if key set, else Google); save internet AI for training
 CENSOR_AI_ENABLED = True

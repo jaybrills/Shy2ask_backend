@@ -7,7 +7,8 @@ from celery import shared_task
 import logging
 import json
 
-from account.emailing import build_email_context, send_templated_email
+from account.emailing import build_email_context, get_info_connection, send_templated_email
+from django.conf import settings
 from account.models import CeleryTaskError  # optional: DB logging
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception):
 
 
 def send_email_django(*, subject: str, recipient: str, text_template: str, html_template: str, context: dict):
-    """Send branded transactional email via Django backend."""
+    """Send branded transactional email from info@shy2ask.com."""
     try:
         send_templated_email(
             subject=subject,
@@ -35,8 +36,10 @@ def send_email_django(*, subject: str, recipient: str, text_template: str, html_
             text_template=text_template,
             html_template=html_template,
             context=context,
+            connection=get_info_connection(),
+            from_email=settings.EMAIL_INFO_USER,
         )
-        logger.info(f"Email sent to {recipient} via Django backend with subject '{subject}'")
+        logger.info(f"Email sent to {recipient} from info account with subject '{subject}'")
     except Exception as exc:
         logger.error(f"Failed to send email to {recipient}: {exc}")
         raise exc
