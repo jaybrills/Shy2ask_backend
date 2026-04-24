@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 
 from .censor_engine import censor_image, censor_text_full
-from .emailing import send_request_created_emails
+from .emailing import send_request_created_emails, send_ticket_created_emails, send_ticket_reply_emails
 from .models import FAQ, FAQVideo, ConversationMessage, Message, Notification, ShyRequest, Subscription, SupportTicket, SupportTicketReply
 from .message_service import (
     MessageAccessError,
@@ -366,7 +366,11 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         return SupportTicket.objects.visible_to(self.request.user).with_related()
 
     def perform_create(self, serializer):
-        serializer.save()
+        ticket = serializer.save()
+        try:
+            send_ticket_created_emails(ticket)
+        except Exception:
+            pass
 
     @extend_schema(
         request=SupportTicketReplyCreateSerializer,
@@ -389,6 +393,11 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            send_ticket_reply_emails(ticket, reply)
+        except Exception:
+            pass
 
         return Response(SupportTicketReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 

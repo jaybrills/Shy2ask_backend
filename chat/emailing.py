@@ -1,6 +1,8 @@
-from account.emailing import build_email_context, send_templated_email
+from django.conf import settings
 
-from .models import Message, ShyRequest
+from account.emailing import build_email_context, get_request_connection, get_support_connection, send_templated_email
+
+from .models import Message, ShyRequest, SupportTicket, SupportTicketReply
 
 
 def _send_request_email(
@@ -25,6 +27,8 @@ def _send_request_email(
         recipient=recipient,
         text_template="emails/request_update.txt",
         html_template="emails/request_update.html",
+        connection=get_request_connection(),
+        from_email=settings.EMAIL_REQUEST_USER,
         context=build_email_context(
             preheader=subject,
             headline=headline,
@@ -110,3 +114,108 @@ def send_request_reply_emails(shy_request: ShyRequest, sender: str, body: str) -
         message_body=clean_body,
         message_label="Your message",
     )
+
+
+# ---------------------------------------------------------------------------
+# Support ticket emails  (sent from support@shy2ask.com)
+# ---------------------------------------------------------------------------
+
+def _send_support_email(
+    *,
+    ticket: SupportTicket,
+    recipient: str,
+    recipient_name: str,
+    subject: str,
+    headline: str,
+    intro: str,
+    summary_title: str,
+    summary_body: str,
+    message_body: str = "",
+    message_label: str = "",
+) -> None:
+    if not recipient:
+        return
+
+    send_templated_email(
+        subject=subject,
+        recipient=recipient,
+        text_template="emails/support_ticket.txt",
+        html_template="emails/support_ticket.html",
+        connection=get_support_connection(),
+        from_email=settings.EMAIL_SUPPORT_USER,
+        context=build_email_context(
+            preheader=subject,
+            headline=headline,
+            intro=intro,
+            footer_note="This email was sent because you are part of this Shy2Ask support ticket.",
+            recipient_name=recipient_name or "there",
+            ticket_ref=ticket.tracking_code,
+            ticket_subject=ticket.subject,
+            status_label=ticket.get_status_display(),
+            priority_label=ticket.get_priority_display(),
+            summary_title=summary_title,
+            summary_body=summary_body,
+            message_body=(message_body or "").strip(),
+            message_label=message_label,
+        ),
+    )
+
+
+def send_ticket_created_emails(ticket: SupportTicket) -> None:
+    user_name = ticket.user.get_full_name() if ticket.user else ""
+
+    _send_support_email(
+        ticket=ticket,
+        recipient=ticket.email,
+        recipient_name=user_name,
+        subject=f"Your support request {ticket.tracking_code} has been received",
+        headline="We've received your support request",
+        intro="Our support team will review your message and get back to you as soon as possible.",
+        summary_title="What happens next",
+        summary_body="You will receive an email notification when a member of our team responds to your ticket.",
+    )
+
+    _send_support_email(
+        ticket=ticket,
+        recipient=settings.EMAIL_SUPPORT_USER,
+        recipient_name="Support Team",
+        subject=f"[{ticket.get_priority_display()}] New support ticket {ticket.tracking_code}",
+        headline="A new support ticket has been opened",
+        intro=f"A user submitted a new support ticket on Shy2Ask.",
+        summary_title="Ticket details",
+        summary_body=f"Review and respond from the admin panel.",
+        message_body=ticket.message,
+        message_label="User's message",
+    )
+
+
+def send_ticket_reply_emails(ticket: SupportTicket, reply: SupportTicketReply) -> None:
+    clean_body = (reply.body or "").strip()
+    user_name = ticket.user.get_full_name() if ticket.user else ""
+
+    if reply.sender_type in {SupportTicketReply.SenderType.STAFF, SupportTicketReply.SenderType.ADMIN}:
+        _send_support_email(
+            ticket=ticket,
+            recipient=ticket.email,
+            recipient_name=user_name,
+            subject=f"Update on your support ticket {ticket.tracking_code}",
+            headline="Our team has replied to your ticket",
+            intro="A member of the Shy2Ask support team has responded to your support request.",
+            summary_title="Their reply",
+            summary_body="You can continue the conversation by replying to this email or from within the app.",
+            message_body=clean_body,
+            message_label="Support team reply",
+        )
+    else:
+        _send_support_email(
+            ticket=ticket,
+            recipient=settings.EMAIL_SUPPORT_USER,
+            recipient_name="Support Team",
+            subject=f"[{ticket.get_priority_display()}] User replied on ticket {ticket.tracking_code}",
+            headline="A user replied to a support ticket",
+            intro=f"The user submitted a new reply on ticket {ticket.tracking_code}.",
+            summary_title="User's reply",
+            summary_body="Log in to the admin panel to respond.",
+            message_body=clean_body,
+            message_label="User's reply",
+        )
