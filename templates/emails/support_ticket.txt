@@ -1,0 +1,21 @@
+{{ app_name }}
+{{ headline }}
+
+{{ intro }}
+
+Hi {{ recipient_name }},
+
+{{ summary_body }}
+
+Ticket reference: {{ ticket_ref }}
+Subject: {{ ticket_subject }}
+Status: {{ status_label }}
+Priority: {{ priority_label }}
+
+{% if message_body %}{{ message_label }}:
+{{ message_body }}
+
+{% endif %}For questions or follow-ups, reply to this email or contact {{ support_email }}.
+
+{{ footer_note }}
+Support: {{ support_email }}
