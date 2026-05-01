@@ -1,7 +1,9 @@
 import logging
+import uuid
 
 import stripe
 from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -45,8 +47,55 @@ def _get_or_create_stripe_customer(user) -> str:
         name=getattr(user, "get_full_name", lambda: "")() or user.email,
         metadata={"user_id": str(user.pk)},
     )
-    StripeCustomer.objects.create(user=user, stripe_customer_id=customer.id)
+    try:
+        StripeCustomer.objects.create(user=user, stripe_customer_id=customer.id)
+    except IntegrityError:
+        # Concurrent request already created the record — delete the orphan and return the winner
+        stripe.Customer.delete(customer.id)
+        return user.stripe_customer.stripe_customer_id
     return customer.id
+
+
+def _ts_to_dt(unix_ts):
+    """Convert a Unix timestamp to a UTC datetime, or None."""
+    if not unix_ts:
+        return None
+    return timezone.datetime.fromtimestamp(unix_ts, tz=t.utc)
+
+
+def _extract_period(stripe_sub):
+    """
+    Get current_period_start / current_period_end from a Stripe Subscription.
+
+    Stripe API ≥2024-12-18 moved these fields from the subscription level to
+    the subscription item level. This helper checks both locations so it works
+    across SDK / API versions.
+
+    Returns: (period_start_ts, period_end_ts) — both Unix timestamps or None.
+    """
+    # Try subscription-level (older API)
+    start = stripe_sub.get("current_period_start") if hasattr(stripe_sub, "get") else getattr(stripe_sub, "current_period_start", None)
+    end = stripe_sub.get("current_period_end") if hasattr(stripe_sub, "get") else getattr(stripe_sub, "current_period_end", None)
+
+    if start and end:
+        return start, end
+
+    # Fallback: subscription item level (newer API 2024-12+)
+    items = stripe_sub.get("items") if hasattr(stripe_sub, "get") else getattr(stripe_sub, "items", None)
+    if items:
+        items_data = items.get("data") if hasattr(items, "get") else getattr(items, "data", None)
+        if items_data and len(items_data) > 0:
+            first_item = items_data[0]
+            start = start or (
+                first_item.get("current_period_start") if hasattr(first_item, "get")
+                else getattr(first_item, "current_period_start", None)
+            )
+            end = end or (
+                first_item.get("current_period_end") if hasattr(first_item, "get")
+                else getattr(first_item, "current_period_end", None)
+            )
+
+    return start, end
 
 
 def _sync_subscription_from_stripe(stripe_sub, user=None):
@@ -75,31 +124,23 @@ def _sync_subscription_from_stripe(stripe_sub, user=None):
                 "No StripeCustomer found for customer %s", stripe_sub["customer"]
             )
             return None
-    
-    period_start = (
-        timezone.datetime.fromtimestamp(
-            stripe_sub["current_period_start"], tz=t.utc
+
+    # Period start/end — handle both old (sub-level) and new (item-level) API
+    period_start_ts, period_end_ts = _extract_period(stripe_sub)
+    period_start = _ts_to_dt(period_start_ts)
+    period_end = _ts_to_dt(period_end_ts)
+
+    # Log a warning if we still couldn't find the period — useful for debugging
+    if not period_start or not period_end:
+        logger.warning(
+            "Subscription %s has no current_period_start/end. "
+            "Check Stripe API version. Raw data: items=%s",
+            stripe_sub.get("id"),
+            stripe_sub.get("items"),
         )
-        if stripe_sub.get("current_period_start")
-        else None
-    )
-    period_end = (
-        timezone.datetime.fromtimestamp(
-            stripe_sub["current_period_end"], tz=t.utc
-        )
-        if stripe_sub.get("current_period_end")
-        else None
-    )
-    trial_end = (
-        timezone.datetime.fromtimestamp(stripe_sub["trial_end"], tz=t.utc)
-        if stripe_sub.get("trial_end")
-        else None
-    )
-    canceled_at = (
-        timezone.datetime.fromtimestamp(stripe_sub["canceled_at"], tz=t.utc)
-        if stripe_sub.get("canceled_at")
-        else None
-    )
+
+    trial_end = _ts_to_dt(stripe_sub.get("trial_end"))
+    canceled_at = _ts_to_dt(stripe_sub.get("canceled_at"))
 
     obj, _ = StripeSubscription.objects.update_or_create(
         stripe_subscription_id=stripe_sub["id"],
@@ -284,6 +325,10 @@ class StripeWebhookView(APIView):
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
         webhook_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", "")
 
+        if not webhook_secret:
+            logger.error("STRIPE_WEBHOOK_SECRET is not configured — rejecting all webhooks")
+            return Response({"detail": "Webhook not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         # Verify signature
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
@@ -355,10 +400,10 @@ class StripeWebhookView(APIView):
             User = get_user_model()
             user = User.objects.filter(pk=user_id).first()
 
-        # Ensure StripeCustomer exists
+        # Ensure StripeCustomer exists and points to the correct customer ID
         customer_id = session.get("customer")
         if user and customer_id:
-            StripeCustomer.objects.get_or_create(
+            StripeCustomer.objects.update_or_create(
                 user=user,
                 defaults={"stripe_customer_id": customer_id},
             )
@@ -450,10 +495,15 @@ class EnrollFreePlanView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Check for an existing active paid subscription
+        # Check for an existing active or in-progress paid subscription
         paid_active = StripeSubscription.objects.filter(
             user=request.user,
-            status__in=[StripeSubscription.Status.ACTIVE, StripeSubscription.Status.TRIALING],
+            status__in=[
+                StripeSubscription.Status.ACTIVE,
+                StripeSubscription.Status.TRIALING,
+                StripeSubscription.Status.INCOMPLETE,
+                StripeSubscription.Status.PAST_DUE,
+            ],
             stripe_subscription_id__isnull=False,
         ).exists()
         if paid_active:
@@ -462,27 +512,28 @@ class EnrollFreePlanView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check for an existing free subscription on this plan
-        existing = StripeSubscription.objects.filter(
-            user=request.user,
-            plan=plan,
-            stripe_subscription_id__isnull=True,
-            status=StripeSubscription.Status.ACTIVE,
-        ).first()
-        if existing:
-            return Response(
-                StripeSubscriptionSerializer(existing).data,
-                status=status.HTTP_200_OK,
-            )
+        # Check-and-create atomically to prevent concurrent duplicate free subscriptions
+        with transaction.atomic():
+            existing = StripeSubscription.objects.select_for_update().filter(
+                user=request.user,
+                plan=plan,
+                stripe_subscription_id__isnull=True,
+                status=StripeSubscription.Status.ACTIVE,
+            ).first()
+            if existing:
+                return Response(
+                    StripeSubscriptionSerializer(existing).data,
+                    status=status.HTTP_200_OK,
+                )
 
-        # Create the free subscription record (no Stripe IDs needed)
-        sub = StripeSubscription.objects.create(
-            user=request.user,
-            plan=plan,
-            stripe_subscription_id=None,
-            stripe_customer_id=None,
-            status=StripeSubscription.Status.ACTIVE,
-        )
+            # Create the free subscription record (no Stripe IDs needed)
+            sub = StripeSubscription.objects.create(
+                user=request.user,
+                plan=plan,
+                stripe_subscription_id=None,
+                stripe_customer_id=None,
+                status=StripeSubscription.Status.ACTIVE,
+            )
         logger.info("User %s enrolled in free plan '%s'", request.user, plan.name)
         return Response(
             StripeSubscriptionSerializer(sub).data,
@@ -599,6 +650,23 @@ class MobileSubscribeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ── Guard: reject if user already has a non-expired subscription ────
+        existing_sub = StripeSubscription.objects.filter(
+            user=request.user,
+            status__in=[
+                StripeSubscription.Status.ACTIVE,
+                StripeSubscription.Status.TRIALING,
+                StripeSubscription.Status.INCOMPLETE,
+                StripeSubscription.Status.PAST_DUE,
+            ],
+            stripe_subscription_id__isnull=False,
+        ).first()
+        if existing_sub:
+            return Response(
+                {"detail": "You already have a subscription. Use POST /api/billing/cancel/ to change plans."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # ── Create subscription ──────────────────────────────────────────────
         try:
             customer_id = _get_or_create_stripe_customer(request.user)
@@ -612,8 +680,10 @@ class MobileSubscribeView(APIView):
                     "latest_invoice.payment_intent",
                     "latest_invoice.confirmation_secret",
                     "pending_setup_intent",
+                    "items",  # ensures items.data[].current_period_start/end are populated
                 ],
                 metadata={"user_id": str(request.user.pk)},
+                idempotency_key=f"mobile-sub-{request.user.pk}-{price_id}-{uuid.uuid4().hex}",
             )
         except stripe.StripeError as exc:
             logger.error("Mobile subscribe failed: %s", exc)
@@ -728,12 +798,18 @@ class MobileSubscribeView(APIView):
             setup_intent = stripe.SetupIntent.create(
                 customer=customer_id,
                 payment_method_types=["card"],
-                usage="off_session",  # for recurring off-session charges
+                usage="off_session",
+                # Link to the subscription so Stripe auto-charges this card when billing starts
                 metadata={
                     "subscription_id": stripe_sub.id,
                     "price_id": price_id,
                     "user_id": str(user_pk),
                 },
+            )
+            # Attach the SetupIntent to the subscription so the saved card is used for billing
+            stripe.Subscription.modify(
+                stripe_sub.id,
+                payment_settings={"save_default_payment_method": "on_subscription"},
             )
             logger.info("Fallback SetupIntent %s created for subscription %s",
                         setup_intent.id, stripe_sub.id)
@@ -788,6 +864,7 @@ class CancelSubscriptionView(APIView):
                     StripeSubscription.Status.ACTIVE,
                     StripeSubscription.Status.TRIALING,
                     StripeSubscription.Status.PAST_DUE,
+                    StripeSubscription.Status.INCOMPLETE,
                 ],
                 stripe_subscription_id__isnull=False,
             )
@@ -888,10 +965,13 @@ class PaymentMethodDeleteView(APIView):
     )
     def delete(self, request, pm_id: str):
         try:
-            customer_id = _get_or_create_stripe_customer(request.user)
+            stripe_cust = StripeCustomer.objects.get(user=request.user)
+        except StripeCustomer.DoesNotExist:
+            return Response({"detail": "No payment methods found."}, status=status.HTTP_404_NOT_FOUND)
 
+        try:
             pm = stripe.PaymentMethod.retrieve(pm_id)
-            if pm.get("customer") != customer_id:
+            if pm.get("customer") != stripe_cust.stripe_customer_id:
                 return Response(
                     {"detail": "Payment method does not belong to this user."},
                     status=status.HTTP_403_FORBIDDEN,
