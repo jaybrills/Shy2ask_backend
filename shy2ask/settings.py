@@ -188,6 +188,9 @@ CSRF_COOKIE_SECURE = env("CSRF_COOKIE_SECURE")
 LOG_LEVEL = env("LOG_LEVEL", default="INFO")
 LOG_FILE = env("LOG_FILE", default="logs/django.log")
 
+# Auto-create the logs directory so the file handler never crashes on missing dir
+Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -208,6 +211,7 @@ LOGGING = {
             "maxBytes": 10 * 1024 * 1024,  # 10 MB
             "backupCount": 5,
             "formatter": "verbose",
+            "delay": True,  # don't open the file until the first log write
         },
     },
     "root": {
