@@ -3,6 +3,7 @@ import uuid
 
 import stripe
 from django.conf import settings
+from django.utils import timezone as django_timezone
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -33,6 +34,23 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _push(user, template, **render_kwargs):
+    """Fire a push notification task for a billing event. Silently no-ops if user is None."""
+    if not user:
+        return
+    try:
+        from account.tasks import send_push_notification_task
+        title, body = template.render(**render_kwargs)
+        send_push_notification_task.delay(
+            user_id=user.id,
+            title=title,
+            body=body,
+            data={"type": template.key, "priority": template.priority.value},
+        )
+    except Exception:
+        logger.exception("Billing push failed for user_id=%s type=%s", getattr(user, "id", None), getattr(template, "key", None))
 
 
 def _get_or_create_stripe_customer(user) -> str:
@@ -409,23 +427,44 @@ class StripeWebhookView(APIView):
             )
 
         _sync_subscription_from_stripe(stripe_sub, user=user)
-        logger.info(
-            "Subscription %s activated for user_id=%s", subscription_id, user_id
-        )
+        logger.info("Subscription %s activated for user_id=%s", subscription_id, user_id)
+
+        from account.push_notifications import N
+        _push(user, N.SUBSCRIPTION_ACTIVATED)
 
     def _handle_subscription_updated(self, stripe_sub):
         """Subscription changed (status, plan, renewal, cancel_at_period_end)."""
-        _sync_subscription_from_stripe(stripe_sub)
-        logger.info(
-            "Subscription %s updated — status=%s",
-            stripe_sub["id"],
-            stripe_sub["status"],
-        )
+        local_sub = _sync_subscription_from_stripe(stripe_sub)
+        logger.info("Subscription %s updated — status=%s", stripe_sub["id"], stripe_sub["status"])
+
+        if not local_sub or not local_sub.user:
+            return
+
+        from account.push_notifications import N
+        new_status = stripe_sub.get("status", "")
+
+        if new_status == "canceled":
+            _push(local_sub.user, N.SUBSCRIPTION_CANCELED)
+        elif new_status == "past_due":
+            _push(local_sub.user, N.SUBSCRIPTION_PAST_DUE)
+
+        # Trial ending soon — notify when trial_end is within 3 days
+        trial_end_ts = stripe_sub.get("trial_end")
+        if trial_end_ts:
+            from datetime import timezone as dt_tz, datetime
+            trial_end_dt = datetime.fromtimestamp(trial_end_ts, tz=dt_tz.utc)
+            days_left = (trial_end_dt - django_timezone.now()).days
+            if 0 <= days_left <= 3:
+                _push(local_sub.user, N.TRIAL_ENDING_SOON, days=str(days_left))
 
     def _handle_subscription_deleted(self, stripe_sub):
         """Subscription canceled immediately (e.g. via API or admin)."""
-        _sync_subscription_from_stripe(stripe_sub)
+        local_sub = _sync_subscription_from_stripe(stripe_sub)
         logger.info("Subscription %s deleted/canceled", stripe_sub["id"])
+
+        from account.push_notifications import N
+        if local_sub and local_sub.user:
+            _push(local_sub.user, N.SUBSCRIPTION_CANCELED)
 
     def _handle_invoice_payment_succeeded(self, invoice):
         """
@@ -437,10 +476,12 @@ class StripeWebhookView(APIView):
             return
 
         stripe_sub = stripe.Subscription.retrieve(subscription_id)
-        _sync_subscription_from_stripe(stripe_sub)
-        logger.info(
-            "Invoice payment succeeded for subscription %s", subscription_id
-        )
+        local_sub = _sync_subscription_from_stripe(stripe_sub)
+        logger.info("Invoice payment succeeded for subscription %s", subscription_id)
+
+        from account.push_notifications import N
+        if local_sub and local_sub.user:
+            _push(local_sub.user, N.SUBSCRIPTION_RENEWED)
 
     def _handle_invoice_payment_failed(self, invoice):
         """
@@ -452,12 +493,12 @@ class StripeWebhookView(APIView):
             return
 
         stripe_sub = stripe.Subscription.retrieve(subscription_id)
-        _sync_subscription_from_stripe(stripe_sub)
-        logger.warning(
-            "Invoice payment FAILED for subscription %s — new status=%s",
-            subscription_id,
-            stripe_sub["status"],
-        )
+        local_sub = _sync_subscription_from_stripe(stripe_sub)
+        logger.warning("Invoice payment FAILED for subscription %s — new status=%s", subscription_id, stripe_sub["status"])
+
+        from account.push_notifications import N
+        if local_sub and local_sub.user:
+            _push(local_sub.user, N.PAYMENT_FAILED)
 
 
 class EnrollFreePlanView(APIView):

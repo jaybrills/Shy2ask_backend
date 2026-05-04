@@ -85,3 +85,48 @@ class OTPQuerySet(models.QuerySet):
 
 class OTPManager(models.Manager.from_queryset(OTPQuerySet)):
     pass
+
+
+class UserDeviceQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(is_active=True)
+
+    def inactive(self):
+        return self.filter(is_active=False)
+
+    def for_user(self, user):
+        return self.filter(user=user)
+
+    def active_for_user(self, user):
+        return self.active().for_user(user)
+
+    def active_tokens_for_user(self, user) -> list[str]:
+        return list(self.active_for_user(user).values_list("fcm_token", flat=True))
+
+
+class UserDeviceManager(models.Manager.from_queryset(UserDeviceQuerySet)):
+    def register(self, *, user, fcm_token: str, device_type: str = "android", device_name: str = "") -> "models.Model":
+        """
+        Upsert a device by token. If the token already exists under a different
+        user (e.g. after account switch or re-install), ownership is transferred.
+        Always reactivates the token so re-installs are handled transparently.
+        """
+        device, _ = self.update_or_create(
+            fcm_token=fcm_token,
+            defaults={
+                "user": user,
+                "device_type": device_type,
+                "device_name": device_name,
+                "is_active": True,
+            },
+        )
+        return device
+
+    def deactivate_token(self, fcm_token: str) -> None:
+        """Mark a single token as invalid. Called when FCM returns UnregisteredError."""
+        self.filter(fcm_token=fcm_token).update(is_active=False)
+
+    def deactivate_tokens(self, token_ids: list[int]) -> None:
+        """Bulk-deactivate stale tokens by primary key after a batch send."""
+        if token_ids:
+            self.filter(id__in=token_ids).update(is_active=False)

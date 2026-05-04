@@ -1,21 +1,22 @@
 """
 Celery tasks for the account app.
-All email sending is offloaded here so HTTP requests return immediately.
-Uses Django's send_mail backend for SMTP (Office365 / Gmail etc.).
+All email and push-notification sending is offloaded here so HTTP requests
+return immediately.
 """
-from celery import shared_task
-import logging
 import json
+import logging
+
+from celery import shared_task
+from django.conf import settings
 
 from account.emailing import build_email_context, get_info_connection, send_templated_email
-from django.conf import settings
-from account.models import CeleryTaskError  # optional: DB logging
+from account.models import CeleryTaskError
 
 logger = logging.getLogger(__name__)
 
 
-def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception):
-    """Log task errors to DB and fallback to logger."""
+def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception) -> None:
+    """Persist a Celery task failure to the DB and always log it."""
     try:
         CeleryTaskError.objects.create(
             task_name=task_name,
@@ -24,11 +25,11 @@ def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception):
             exception=str(exc),
         )
     except Exception as e:
-        logger.error(f"Failed to log Celery task error: {e}")
+        logger.error("Failed to log Celery task error to DB: %s", e)
 
 
-def send_email_django(*, subject: str, recipient: str, text_template: str, html_template: str, context: dict):
-    """Send branded transactional email from info@shy2ask.com."""
+def send_email_django(*, subject: str, recipient: str, text_template: str, html_template: str, context: dict) -> None:
+    """Send a branded transactional email from info@shy2ask.com."""
     try:
         send_templated_email(
             subject=subject,
@@ -39,16 +40,15 @@ def send_email_django(*, subject: str, recipient: str, text_template: str, html_
             connection=get_info_connection(),
             from_email=settings.EMAIL_INFO_USER,
         )
-        logger.info(f"Email sent to {recipient} from info account with subject '{subject}'")
+        logger.info("Email sent to %s — subject: %s", recipient, subject)
     except Exception as exc:
-        logger.error(f"Failed to send email to {recipient}: {exc}")
-        raise exc
+        logger.error("Failed to send email to %s: %s", recipient, exc)
+        raise
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_otp_email_task(self, email: str, otp: str):
-    """Send password-reset OTP email asynchronously via Django backend."""
-    subject = "Shy2Ask.com password reset code"
+def send_otp_email_task(self, email: str, otp: str) -> None:
+    """Send a password-reset OTP email asynchronously."""
     context = build_email_context(
         preheader="Use this one-time code to reset your password.",
         headline="Reset your password",
@@ -62,21 +62,20 @@ def send_otp_email_task(self, email: str, otp: str):
     )
     try:
         send_email_django(
-            subject=subject,
+            subject="Shy2Ask.com password reset code",
             recipient=email,
             text_template="emails/auth_otp.txt",
             html_template="emails/auth_otp.html",
             context=context,
         )
     except Exception as exc:
-        log_task_error(self.name, (email, otp), {}, exc)
+        log_task_error(self.name, (email,), {}, exc)
         raise self.retry(exc=exc)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_verification_email_task(self, email: str, otp: str):
-    """Send email verification OTP asynchronously via Django backend."""
-    subject = "Verify your email for Shy2Ask.com"
+def send_verification_email_task(self, email: str, otp: str) -> None:
+    """Send an email-verification OTP asynchronously."""
     context = build_email_context(
         preheader="Confirm your email to activate your Shy2Ask.com account.",
         headline="Verify your email",
@@ -90,12 +89,41 @@ def send_verification_email_task(self, email: str, otp: str):
     )
     try:
         send_email_django(
-            subject=subject,
+            subject="Verify your email for Shy2Ask.com",
             recipient=email,
             text_template="emails/auth_otp.txt",
             html_template="emails/auth_otp.html",
             context=context,
         )
     except Exception as exc:
-        log_task_error(self.name, (email, otp), {}, exc)
+        log_task_error(self.name, (email,), {}, exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_push_notification_task(self, user_id: int, title: str, body: str, data: dict | None = None) -> None:
+    """
+    Send a Firebase push notification to all active devices of a user.
+
+    Fetches every registered active FCM token for the user and delivers via
+    FCM's batch API in a single round-trip. Stale/unregistered tokens are
+    deactivated automatically after the batch completes.
+
+    Args:
+        user_id:  Primary key of the recipient User.
+        title:    Notification title shown on the device.
+        body:     Notification body text.
+        data:     Optional key-value payload delivered alongside the notification.
+                  All values are coerced to strings (FCM requirement).
+    """
+    from account.firebase import send_to_user_devices
+
+    try:
+        stats = send_to_user_devices(user_id=user_id, title=title, body=body, data=data or {})
+        logger.info(
+            "Push notification dispatched — user_id=%s title=%r stats=%s",
+            user_id, title, stats,
+        )
+    except Exception as exc:
+        log_task_error(self.name, (user_id, title, body), data or {}, exc)
         raise self.retry(exc=exc)
