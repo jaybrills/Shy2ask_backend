@@ -8,7 +8,7 @@ from django.db.models.functions import Lower
 from django.utils.translation import gettext_lazy as _
 
 from .alias_utils import generate_alias_suggestions, generate_unique_alias_name, normalize_alias_name
-from .managers import OTPManager, UserManager
+from .managers import OTPManager, UserDeviceManager, UserManager
 from .validators import validate_phone_number, validate_disposable_email
 
 
@@ -424,6 +424,72 @@ class CeleryTaskError(models.Model):
 
     def __str__(self):
         return self.task_name
+
+
+class UserDevice(CreatedAtModel):
+    """
+    One row per physical app install.
+    A single user can have many devices (phone, tablet, second phone etc.).
+    FCM tokens are globally unique — they identify a specific app installation,
+    not a user — so the token is the natural upsert key.
+    """
+
+    ANDROID = "android"
+    IOS = "ios"
+    WEB = "web"
+    DEVICE_TYPE_CHOICES = [
+        (ANDROID, _("Android")),
+        (IOS, _("iOS")),
+        (WEB, _("Web")),
+    ]
+
+    user = models.ForeignKey(
+        "account.User",
+        on_delete=models.CASCADE,
+        related_name="devices",
+        verbose_name=_("user"),
+    )
+    fcm_token = models.TextField(
+        _("FCM token"),
+        unique=True,
+        help_text=_("Firebase Cloud Messaging registration token for this device."),
+    )
+    device_type = models.CharField(
+        _("device type"),
+        max_length=10,
+        choices=DEVICE_TYPE_CHOICES,
+        default=ANDROID,
+    )
+    device_name = models.CharField(
+        _("device name"),
+        max_length=100,
+        blank=True,
+        default="",
+        help_text=_("Optional human-readable label, e.g. 'iPhone 15 Pro'."),
+    )
+    is_active = models.BooleanField(
+        _("active"),
+        default=True,
+        help_text=_("Unset automatically when FCM reports the token as unregistered."),
+    )
+    last_used_at = models.DateTimeField(
+        _("last used at"),
+        auto_now=True,
+    )
+
+    objects = UserDeviceManager()
+
+    class Meta:
+        verbose_name = _("user device")
+        verbose_name_plural = _("user devices")
+        db_table = "account_user_device"
+        indexes = [
+            models.Index(fields=["user", "is_active"], name="account_device_user_active_idx"),
+        ]
+
+    def __str__(self):
+        label = self.device_name or self.get_device_type_display()
+        return f"{self.user.email} — {label}"
 
 
 class ActiveUser(User):

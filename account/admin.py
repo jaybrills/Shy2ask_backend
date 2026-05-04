@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 from django.utils.timesince import timesince
 from django.utils.translation import gettext_lazy as _
-from unfold.admin import ModelAdmin
+from unfold.admin import ModelAdmin, TabularInline
 
 from .models import (
     ActiveUser,
@@ -12,6 +12,7 @@ from .models import (
     PasswordResetOTP,
     PendingVerificationUser,
     User,
+    UserDevice,
 )
 
 
@@ -24,6 +25,22 @@ def status_badge(label: str, *, tone: str) -> str:
     )
 
 
+class UserDeviceInline(TabularInline):
+    model = UserDevice
+    extra = 0
+    fields = ("device_type", "device_name", "active_state", "last_used_at", "token_preview")
+    readonly_fields = ("active_state", "last_used_at", "token_preview")
+    show_change_link = False
+
+    @admin.display(description="Status")
+    def active_state(self, obj):
+        return status_badge("Active" if obj.is_active else "Stale", tone="#0f766e" if obj.is_active else "#b42318")
+
+    @admin.display(description="FCM Token")
+    def token_preview(self, obj):
+        return f"{obj.fcm_token[:28]}…" if len(obj.fcm_token) > 28 else obj.fcm_token
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin, ModelAdmin):
     list_fullwidth = True
@@ -31,6 +48,7 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
     warn_unsaved_form = True
     list_filter_submit = True
     search_help_text = "Search by email, alias, first name, last name, or phone number."
+    inlines = [UserDeviceInline]
     list_display = (
         "email",
         "identity_snapshot",
@@ -160,3 +178,18 @@ class CeleryTaskErrorAdmin(ModelAdmin):
     def exception_preview(self, obj):
         text = (obj.exception or "").strip()
         return text[:120] + ("..." if len(text) > 120 else "")
+
+
+@admin.register(UserDevice)
+class UserDeviceAdmin(ModelAdmin):
+    list_fullwidth = True
+    list_display = ("user", "device_type", "device_name", "active_state", "last_used_at", "created_at")
+    list_filter = ("device_type", "is_active", "created_at")
+    search_fields = ("user__email", "user__alias_name", "device_name", "fcm_token")
+    readonly_fields = ("fcm_token", "created_at", "last_used_at", "active_state")
+    raw_id_fields = ("user",)
+    ordering = ("-last_used_at",)
+
+    @admin.display(description="Status")
+    def active_state(self, obj):
+        return status_badge("Active" if obj.is_active else "Stale", tone="#0f766e" if obj.is_active else "#b42318")

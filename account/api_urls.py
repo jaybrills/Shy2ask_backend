@@ -3,6 +3,8 @@ from django.urls import path
 from .api_views import (
     CheckAliasView,
     CheckEmailView,
+    DeviceRegisterView,
+    DeviceUnregisterView,
     ForgotPasswordView,
     LoginView,
     ProfileMeView,
@@ -38,4 +40,8 @@ urlpatterns = [
     path("profile/me/", ProfileMeView.as_view()),
     path("profile/users", UserListView.as_view()),
     path("profile/users/", UserListView.as_view()),
+    path("profile/devices/register", DeviceRegisterView.as_view()),
+    path("profile/devices/register/", DeviceRegisterView.as_view()),
+    path("profile/devices/unregister", DeviceUnregisterView.as_view()),
+    path("profile/devices/unregister/", DeviceUnregisterView.as_view()),
 ]

@@ -266,6 +266,9 @@ STRIPE_DEFAULT_PRICE_ID = env("STRIPE_DEFAULT_PRICE_ID", default="")
 if STRIPE_SECRET_KEY:
     _stripe.api_key = STRIPE_SECRET_KEY
 
+# ── Firebase Cloud Messaging ──────────────────────────────────────────────────
+FIREBASE_SERVICE_ACCOUNT_PATH = env("FIREBASE_SERVICE_ACCOUNT_PATH", default="")
+
 # ── Celery ────────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/1"
 CELERY_RESULT_BACKEND ="redis://127.0.0.1:6379/2"

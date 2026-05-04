@@ -90,6 +90,19 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         fields = ["first_name", "last_name", "alias_name", "phone_number", "profile_picture"]
 
 
+class DeviceRegisterSerializer(serializers.Serializer):
+    fcm_token = serializers.CharField(max_length=4096)
+    device_type = serializers.ChoiceField(
+        choices=["android", "ios", "web"],
+        default="android",
+    )
+    device_name = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+
+
+class DeviceUnregisterSerializer(serializers.Serializer):
+    fcm_token = serializers.CharField(max_length=4096)
+
+
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -401,6 +414,51 @@ class ProfileMeView(RetrieveUpdateAPIView):
         except ValidationError as exc:
             return Response({"detail": getattr(exc, "message_dict", exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ProfileSerializer(self.get_object()).data)
+
+
+class DeviceRegisterView(GenericAPIView):
+    """
+    Register (or re-register) a device for push notifications.
+
+    Call this on every app launch after obtaining a fresh FCM token.
+    If the token already exists under a different user (account switch / re-install),
+    ownership is transferred automatically.
+    """
+    serializer_class = DeviceRegisterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def post(self, request):
+        from account.models import UserDevice
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        UserDevice.objects.register(
+            user=request.user,
+            fcm_token=serializer.validated_data["fcm_token"],
+            device_type=serializer.validated_data["device_type"],
+            device_name=serializer.validated_data.get("device_name", ""),
+        )
+        return Response({"detail": "Device registered."}, status=status.HTTP_200_OK)
+
+
+class DeviceUnregisterView(GenericAPIView):
+    """
+    Unregister a device. Call this on logout so the user stops receiving
+    push notifications on that device.
+    """
+    serializer_class = DeviceUnregisterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def post(self, request):
+        from account.models import UserDevice
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        UserDevice.objects.filter(
+            user=request.user,
+            fcm_token=serializer.validated_data["fcm_token"],
+        ).update(is_active=False)
+        return Response({"detail": "Device unregistered."}, status=status.HTTP_200_OK)
 
 
 class UserListView(ListAPIView):

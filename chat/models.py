@@ -976,6 +976,7 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
         return self.replies.order_by("-created_at").first()
 
     def save(self, *args, **kwargs):
+        is_new = self.pk is None
         if not self.tracking_code:
             self.tracking_code = self._generate_unique_tracking_code()
         self._sync_email_user_pair(user_field="user", email_field="email")
@@ -985,6 +986,31 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
                 raise ValidationError({"message": ["Message contains blocked content."]})
             self.message = clean_message
         super().save(*args, **kwargs)
+
+        if is_new:
+            self._push_ticket_created()
+
+    def _push_ticket_created(self):
+        try:
+            from account.push_notifications import N
+            from account.tasks import send_push_notification_task
+
+            # #32 — notify admin staff if ticket is HIGH or URGENT priority
+            if self.priority in (self.Priority.HIGH, self.Priority.URGENT):
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                staff_ids = list(User.objects.filter(is_staff=True, is_active=True).values_list("id", flat=True))
+                title, body = N.HIGH_PRIORITY_TICKET.render()
+                for staff_id in staff_ids:
+                    send_push_notification_task.delay(
+                        user_id=staff_id,
+                        title=title,
+                        body=body,
+                        data={"type": N.HIGH_PRIORITY_TICKET.key, "ticket_id": str(self.pk)},
+                    )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Push failed for new support ticket pk=%s", self.pk)
 
 
 class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
@@ -1029,6 +1055,27 @@ class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
             status=ticket_status if self.ticket.status != SupportTicket.Status.CLOSED else self.ticket.status,
             updated_at=self.created_at,
         )
+        self._push_reply()
+
+    def _push_reply(self):
+        try:
+            from account.push_notifications import N
+            from account.tasks import send_push_notification_task
+
+            # #28 — notify ticket owner when staff/admin replies
+            if self.sender_type in (self.SenderType.STAFF, self.SenderType.ADMIN):
+                owner_id = self.ticket.user_id
+                if owner_id:
+                    title, body = N.TICKET_STAFF_REPLY.render()
+                    send_push_notification_task.delay(
+                        user_id=owner_id,
+                        title=title,
+                        body=body,
+                        data={"type": N.TICKET_STAFF_REPLY.key, "ticket_id": str(self.ticket_id)},
+                    )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Push failed for ticket reply pk=%s", self.pk)
 
 
 def link_user_references(user):
