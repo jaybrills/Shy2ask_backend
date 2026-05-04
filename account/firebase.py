@@ -34,12 +34,18 @@ def get_firebase_app() -> firebase_admin.App | None:
         return None
 
     try:
-        cred = credentials.Certificate(full_path)
-        _firebase_app = firebase_admin.initialize_app(cred)
-        logger.info("Firebase Admin SDK initialised successfully.")
-    except Exception:
-        logger.exception("Firebase initialisation failed.")
-        return None
+        # If already initialised (e.g. worker pre-fork or test runner), reuse it
+        _firebase_app = firebase_admin.get_app()
+        logger.info("Firebase Admin SDK reused existing app.")
+    except ValueError:
+        # Not yet initialised — create it now
+        try:
+            cred = credentials.Certificate(full_path)
+            _firebase_app = firebase_admin.initialize_app(cred)
+            logger.info("Firebase Admin SDK initialised successfully.")
+        except Exception:
+            logger.exception("Firebase initialisation failed.")
+            return None
 
     return _firebase_app
 

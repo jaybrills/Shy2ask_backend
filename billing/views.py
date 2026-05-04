@@ -576,6 +576,10 @@ class EnrollFreePlanView(APIView):
                 status=StripeSubscription.Status.ACTIVE,
             )
         logger.info("User %s enrolled in free plan '%s'", request.user, plan.name)
+
+        from account.push_notifications import N
+        _push(request.user, N.SUBSCRIPTION_ACTIVATED)
+
         return Response(
             StripeSubscriptionSerializer(sub).data,
             status=status.HTTP_201_CREATED,
@@ -732,6 +736,9 @@ class MobileSubscribeView(APIView):
 
         # Persist locally before any fallback API calls
         _sync_subscription_from_stripe(stripe_sub, user=request.user)
+
+        from account.push_notifications import N
+        _push(request.user, N.SUBSCRIPTION_ACTIVATED)
 
         # ── Resolve a usable client_secret ───────────────────────────────────
         client_secret, intent_type = self._resolve_client_secret(
@@ -932,6 +939,10 @@ class CancelSubscriptionView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
         updated_sub = _sync_subscription_from_stripe(stripe_sub, user=request.user)
+
+        from account.push_notifications import N
+        _push(request.user, N.SUBSCRIPTION_CANCELED)
+
         return Response(StripeSubscriptionSerializer(updated_sub).data, status=status.HTTP_200_OK)
 
 
