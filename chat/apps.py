@@ -6,4 +6,7 @@ class CoreConfig(AppConfig):
     name = 'chat'
 
     def ready(self):
-        import chat.signals  # noqa: F401 — registers push-notification signals
+        from django.db.models.signals import pre_save
+        from chat.signals import on_ticket_status_change
+        from chat.models import SupportTicket
+        pre_save.connect(on_ticket_status_change, sender=SupportTicket)

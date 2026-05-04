@@ -994,8 +994,10 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
         try:
             from account.push_notifications import N
             from account.tasks import send_push_notification_task
+            import logging
+            log = logging.getLogger(__name__)
 
-            # #32 — notify admin staff if ticket is HIGH or URGENT priority
+            # #32 — notify ALL staff when ticket is HIGH or URGENT priority
             if self.priority in (self.Priority.HIGH, self.Priority.URGENT):
                 from django.contrib.auth import get_user_model
                 User = get_user_model()
@@ -1008,6 +1010,8 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
                         body=body,
                         data={"type": N.HIGH_PRIORITY_TICKET.key, "ticket_id": str(self.pk)},
                     )
+                log.info("Push queued: high_priority_ticket to %d staff for ticket pk=%s", len(staff_ids), self.pk)
+
         except Exception:
             import logging
             logging.getLogger(__name__).exception("Push failed for new support ticket pk=%s", self.pk)
@@ -1061,10 +1065,13 @@ class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
         try:
             from account.push_notifications import N
             from account.tasks import send_push_notification_task
+            import logging
+            log = logging.getLogger(__name__)
+
+            owner_id = self.ticket.user_id
 
             # #28 — notify ticket owner when staff/admin replies
             if self.sender_type in (self.SenderType.STAFF, self.SenderType.ADMIN):
-                owner_id = self.ticket.user_id
                 if owner_id:
                     title, body = N.TICKET_STAFF_REPLY.render()
                     send_push_notification_task.delay(
@@ -1073,6 +1080,8 @@ class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
                         body=body,
                         data={"type": N.TICKET_STAFF_REPLY.key, "ticket_id": str(self.ticket_id)},
                     )
+                    log.info("Push queued: ticket_staff_reply to user_id=%s", owner_id)
+
         except Exception:
             import logging
             logging.getLogger(__name__).exception("Push failed for ticket reply pk=%s", self.pk)
