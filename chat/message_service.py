@@ -140,6 +140,7 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
     send_request_reply_emails(shy_request, sender, body)
 
     if sender == Message.Actor.TARGET:
+        # Target replied → notify requester (#10 message_replied)
         send_notification(
             subject="New reply from target",
             body=f"Target replied to your request {shy_request.tracking_code}",
@@ -147,7 +148,9 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
             related_request=shy_request,
             use_ai_enhance=False,
             deliver_email=False,
+            push_type="message_replied",
         )
+        # Delivery confirmation to sender — no push needed
         send_notification(
             subject="New message from target",
             body=f"Your reply on {shy_request.tracking_code} was delivered.",
@@ -165,6 +168,7 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
             )
     else:
         if shy_request.target_email:
+            # Requester sent message → notify target (#9 new_message)
             send_notification(
                 subject="New reply from requester",
                 body=f"Requester sent a new message on {shy_request.tracking_code}.",
@@ -172,7 +176,9 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
                 related_request=shy_request,
                 use_ai_enhance=False,
                 deliver_email=False,
+                push_type="new_message",
             )
+        # Delivery confirmation to sender — no push needed
         send_notification(
             subject="New message from requester",
             body=f"Your reply on {shy_request.tracking_code} was delivered.",

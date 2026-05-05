@@ -1,3 +1,4 @@
+import logging
 import secrets
 import string
 from decimal import Decimal
@@ -9,6 +10,8 @@ from django.db import models
 from django.utils import timezone
 
 from .utils import censor_text
+
+logger = logging.getLogger(__name__)
 
 
 def generate_tracking_code(length: int = 10) -> str:
@@ -994,12 +997,9 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
         try:
             from account.push_notifications import N
             from account.tasks import send_push_notification_task
-            import logging
-            log = logging.getLogger(__name__)
 
             # #32 — notify ALL staff when ticket is HIGH or URGENT priority
             if self.priority in (self.Priority.HIGH, self.Priority.URGENT):
-                from django.contrib.auth import get_user_model
                 User = get_user_model()
                 staff_ids = list(User.objects.filter(is_staff=True, is_active=True).values_list("id", flat=True))
                 title, body = N.HIGH_PRIORITY_TICKET.render()
@@ -1010,11 +1010,10 @@ class SupportTicket(TimeStampedModel, EmailUserResolutionModel):
                         body=body,
                         data={"type": N.HIGH_PRIORITY_TICKET.key, "ticket_id": str(self.pk)},
                     )
-                log.info("Push queued: high_priority_ticket to %d staff for ticket pk=%s", len(staff_ids), self.pk)
+                logger.info("Push queued: high_priority_ticket to %d staff for ticket pk=%s", len(staff_ids), self.pk)
 
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Push failed for new support ticket pk=%s", self.pk)
+            logger.exception("Push failed for new support ticket pk=%s", self.pk)
 
 
 class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
@@ -1065,8 +1064,6 @@ class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
         try:
             from account.push_notifications import N
             from account.tasks import send_push_notification_task
-            import logging
-            log = logging.getLogger(__name__)
 
             owner_id = self.ticket.user_id
 
@@ -1080,11 +1077,10 @@ class SupportTicketReply(TimeStampedModel, EmailUserResolutionModel):
                         body=body,
                         data={"type": N.TICKET_STAFF_REPLY.key, "ticket_id": str(self.ticket_id)},
                     )
-                    log.info("Push queued: ticket_staff_reply to user_id=%s", owner_id)
+                    logger.info("Push queued: ticket_staff_reply to user_id=%s", owner_id)
 
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Push failed for ticket reply pk=%s", self.pk)
+            logger.exception("Push failed for ticket reply pk=%s", self.pk)
 
 
 def link_user_references(user):
