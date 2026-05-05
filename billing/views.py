@@ -695,7 +695,7 @@ class MobileSubscribeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ── Guard: reject if user already has a non-expired subscription ────
+        # ── Guard: handle existing subscriptions by status ──────────────────
         existing_sub = StripeSubscription.objects.filter(
             user=request.user,
             status__in=[
@@ -705,12 +705,111 @@ class MobileSubscribeView(APIView):
                 StripeSubscription.Status.PAST_DUE,
             ],
             stripe_subscription_id__isnull=False,
-        ).first()
+        ).order_by("-created_at").first()
+
         if existing_sub:
-            return Response(
-                {"detail": "You already have a subscription. Use POST /api/billing/cancel/ to change plans."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            # ── Truly active / trialing → hard block ────────────────────────
+            if existing_sub.status in (
+                StripeSubscription.Status.ACTIVE,
+                StripeSubscription.Status.TRIALING,
+            ):
+                return Response(
+                    {"detail": "You already have an active subscription. Use POST /api/billing/cancel/ to change plans."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ── Past due → must fix payment method, not re-subscribe ────────
+            if existing_sub.status == StripeSubscription.Status.PAST_DUE:
+                return Response(
+                    {"detail": "Your subscription is past due. Please update your payment method via /api/billing/payment-methods/."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ── Incomplete → user cancelled the Payment Sheet previously ────
+            # Strategy:
+            #   Same plan  → reuse the existing Stripe subscription (return
+            #                 a fresh client_secret so user can try again).
+            #   Diff plan  → cancel the stale incomplete sub, fall through to
+            #                 create a new one for the requested plan.
+            if existing_sub.status == StripeSubscription.Status.INCOMPLETE:
+                same_plan = (
+                    existing_sub.plan_id is not None
+                    and existing_sub.plan
+                    and existing_sub.plan.stripe_price_id == price_id
+                )
+
+                if same_plan:
+                    # Retrieve the live Stripe object to confirm it is still incomplete
+                    try:
+                        stripe_sub = stripe.Subscription.retrieve(
+                            existing_sub.stripe_subscription_id,
+                            expand=[
+                                "latest_invoice.payment_intent",
+                                "latest_invoice.confirmation_secret",
+                                "pending_setup_intent",
+                                "items",
+                            ],
+                        )
+                    except stripe.StripeError as exc:
+                        logger.error(
+                            "Failed to retrieve incomplete subscription %s: %s",
+                            existing_sub.stripe_subscription_id,
+                            exc,
+                        )
+                        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+                    # Sync whatever Stripe now says (it may have auto-expired)
+                    _sync_subscription_from_stripe(stripe_sub, user=request.user)
+
+                    if stripe_sub.status == "incomplete":
+                        # Still live — resolve a new client_secret and let the
+                        # user try the Payment Sheet again (no new sub created)
+                        customer_id = (
+                            existing_sub.stripe_customer_id
+                            or _get_or_create_stripe_customer(request.user)
+                        )
+                        client_secret, intent_type = self._resolve_client_secret(
+                            stripe_sub=stripe_sub,
+                            customer_id=customer_id,
+                            price_id=price_id,
+                            user_pk=request.user.pk,
+                        )
+                        logger.info(
+                            "Reusing incomplete subscription %s for user_id=%s (retry after cancel)",
+                            stripe_sub.id,
+                            request.user.pk,
+                        )
+                        return Response(
+                            {
+                                "subscription_id": stripe_sub.id,
+                                "client_secret": client_secret,
+                                "intent_type": intent_type,
+                                "status": stripe_sub.status,
+                            },
+                            status=status.HTTP_200_OK,  # 200 = reused, not 201
+                        )
+                    # Else: Stripe already expired/canceled it — fall through
+                    # to create a brand-new subscription below.
+
+                else:
+                    # Different plan requested — cancel the stale incomplete sub
+                    # so Stripe doesn't hold the customer in limbo.
+                    try:
+                        stripe.Subscription.cancel(existing_sub.stripe_subscription_id)
+                        logger.info(
+                            "Canceled stale incomplete subscription %s (user switching plan)",
+                            existing_sub.stripe_subscription_id,
+                        )
+                    except stripe.StripeError as exc:
+                        logger.warning(
+                            "Could not cancel stale incomplete subscription %s: %s",
+                            existing_sub.stripe_subscription_id,
+                            exc,
+                        )
+                    # Update local record regardless of Stripe call outcome
+                    existing_sub.status = StripeSubscription.Status.CANCELED
+                    existing_sub.save(update_fields=["status", "updated_at"])
+                    # Fall through to create a new subscription for the new plan
 
         # ── Create subscription ──────────────────────────────────────────────
         try:
@@ -736,9 +835,6 @@ class MobileSubscribeView(APIView):
 
         # Persist locally before any fallback API calls
         _sync_subscription_from_stripe(stripe_sub, user=request.user)
-
-        from account.push_notifications import N
-        _push(request.user, N.SUBSCRIPTION_ACTIVATED)
 
         # ── Resolve a usable client_secret ───────────────────────────────────
         client_secret, intent_type = self._resolve_client_secret(
