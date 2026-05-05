@@ -109,6 +109,10 @@ def send_push_notification_task(self, user_id: int, title: str, body: str, data:
     FCM's batch API in a single round-trip. Stale/unregistered tokens are
     deactivated automatically after the batch completes.
 
+    Every notification is persisted to UserNotification before FCM delivery
+    so the in-app notification history is always complete regardless of
+    device state or FCM token validity.
+
     Args:
         user_id:  Primary key of the recipient User.
         title:    Notification title shown on the device.
@@ -117,13 +121,34 @@ def send_push_notification_task(self, user_id: int, title: str, body: str, data:
                   All values are coerced to strings (FCM requirement).
     """
     from account.firebase import send_to_user_devices
+    from account.models import UserNotification
 
+    payload = data or {}
+
+    # ── Persist to DB first (history is written even if FCM fails) ────────
     try:
-        stats = send_to_user_devices(user_id=user_id, title=title, body=body, data=data or {})
+        UserNotification.objects.create(
+            user_id=user_id,
+            title=title,
+            body=body,
+            notification_type=payload.get("type", ""),
+            priority=payload.get("priority", UserNotification.Priority.MEDIUM),
+            data=payload,
+        )
+    except Exception as exc:
+        # Never let a DB write failure block the actual push delivery
+        logger.error(
+            "Failed to persist UserNotification for user_id=%s: %s",
+            user_id, exc,
+        )
+
+    # ── Deliver via FCM ───────────────────────────────────────────────────
+    try:
+        stats = send_to_user_devices(user_id=user_id, title=title, body=body, data=payload)
         logger.info(
             "Push notification dispatched — user_id=%s title=%r stats=%s",
             user_id, title, stats,
         )
     except Exception as exc:
-        log_task_error(self.name, (user_id, title, body), data or {}, exc)
+        log_task_error(self.name, (user_id, title, body), payload, exc)
         raise self.retry(exc=exc)

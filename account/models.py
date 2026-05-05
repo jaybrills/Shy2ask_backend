@@ -492,6 +492,70 @@ class UserDevice(CreatedAtModel):
         return f"{self.user.email} — {label}"
 
 
+class UserNotification(models.Model):
+    """
+    Persistent log of every push notification sent to a user.
+    Written by send_push_notification_task before FCM delivery so that
+    the history is complete even if the device was offline or the token stale.
+    """
+
+    class Priority(models.TextChoices):
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        verbose_name=_("user"),
+    )
+    title = models.CharField(_("title"), max_length=255)
+    body = models.TextField(_("body"))
+    notification_type = models.CharField(
+        _("notification type"),
+        max_length=100,
+        db_index=True,
+        help_text=_("Key from PushTemplate (e.g. subscription_activated, payment_failed)."),
+    )
+    priority = models.CharField(
+        _("priority"),
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
+    )
+    data = models.JSONField(
+        _("extra data"),
+        default=dict,
+        blank=True,
+        help_text=_("Full data payload delivered with the notification."),
+    )
+    is_read = models.BooleanField(
+        _("read"),
+        default=False,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(_("sent at"), auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("user notification")
+        verbose_name_plural = _("user notifications")
+        db_table = "account_user_notification"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["user", "-created_at"],
+                name="account_notif_user_date_idx",
+            ),
+            models.Index(
+                fields=["user", "is_read"],
+                name="account_notif_user_read_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"[{self.priority.upper()}] {self.user.email} — {self.title}"
+
+
 class ActiveUser(User):
     class Meta:
         proxy = True
