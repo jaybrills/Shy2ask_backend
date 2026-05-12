@@ -37,7 +37,7 @@ def on_ticket_status_change(sender, instance, **kwargs):
                 user_id=owner_id,
                 title=title,
                 body=body,
-                data={"type": N.TICKET_RESOLVED.key, "ticket_id": str(instance.pk)},
+                data={"type": N.TICKET_RESOLVED.key, "ticket_id": str(instance.pk) , "priority": N.TICKET_RESOLVED.priority},
             )
             logger.info("Push queued: ticket_resolved for user_id=%s", owner_id)
 
@@ -47,7 +47,7 @@ def on_ticket_status_change(sender, instance, **kwargs):
                 user_id=owner_id,
                 title=title,
                 body=body,
-                data={"type": N.TICKET_CLOSED.key, "ticket_id": str(instance.pk)},
+                data={"type": N.TICKET_CLOSED.key, "ticket_id": str(instance.pk), "priority": N.TICKET_CLOSED.priority},
             )
             logger.info("Push queued: ticket_closed for user_id=%s", owner_id)
 

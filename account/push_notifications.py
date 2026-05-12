@@ -30,7 +30,7 @@ from enum import Enum
 class Priority(str, Enum):
     HIGH = "high"      # red in spec
     MEDIUM = "medium"  # orange in spec
-
+    IGNORABLE = "ignorable"
 
 @dataclass(frozen=True)
 class PushTemplate:
@@ -120,7 +120,7 @@ class N:
         key="ticket_staff_reply",
         title="Staff Replied to Your Ticket",
         body="A staff member replied to your support ticket.",
-        priority=Priority.HIGH,
+        priority=Priority.IGNORABLE,
     )
 
     # ── ORANGE — important follow-ups / warnings ───────────────────────────────
@@ -129,7 +129,7 @@ class N:
         key="message_replied",
         title="New Reply",
         body="Someone replied to your message.",
-        priority=Priority.MEDIUM,
+        priority=Priority.IGNORABLE,
     )
 
     SUBSCRIPTION_UPDATE = PushTemplate(                 # #12
@@ -171,20 +171,55 @@ class N:
         key="ticket_resolved",
         title="Ticket Resolved",
         body="Your support ticket has been marked as resolved.",
-        priority=Priority.MEDIUM,
+        priority=Priority.IGNORABLE,
     )
 
     TICKET_CLOSED = PushTemplate(                       # #30
         key="ticket_closed",
         title="Ticket Closed",
         body="Your support ticket has been closed.",
-        priority=Priority.MEDIUM,
+        priority=Priority.IGNORABLE,
     )
 
     HIGH_PRIORITY_TICKET = PushTemplate(                # #32
         key="high_priority_ticket",
         title="High Priority Support Ticket",
         body="A high-priority support ticket needs attention.",
+        priority=Priority.MEDIUM,
+    )
+
+    NEW_REQUEST = PushTemplate(
+        key="new_request",
+        title="New Request Received",
+        body="Someone sent you a new request. Tap to view it.",
+        priority=Priority.HIGH,
+    )
+
+    PASSWORD_CHANGED = PushTemplate(
+        key="password_changed",
+        title="Password Changed",
+        body="Your account password was recently changed. If this wasn't you, contact support immediately.",
+        priority=Priority.HIGH,
+    )
+
+    ALIAS_NAME_CHANGED = PushTemplate(
+        key="alias_name_changed",
+        title="Alias Name Updated",
+        body="Your alias name has been updated to {alias_name}.",
+        priority=Priority.MEDIUM,
+    )
+
+    PHONE_NUMBER_CHANGED = PushTemplate(
+        key="phone_number_changed",
+        title="Phone Number Updated",
+        body="Your phone number has been updated on your account.",
+        priority=Priority.MEDIUM,
+    )
+
+    FULL_NAME_CHANGED = PushTemplate(
+        key="full_name_changed",
+        title="Name Updated",
+        body="Your full name has been updated on your account.",
         priority=Priority.MEDIUM,
     )
 

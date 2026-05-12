@@ -239,6 +239,19 @@ class ResetPasswordView(GenericAPIView):
             return Response({"detail": "Password must be at least 8 characters."}, status=status.HTTP_400_BAD_REQUEST)
         if not verify_otp_and_reset_password(data["email"], data["otp"], data["new_password"]):
             return Response({"detail": "Invalid or expired OTP. Request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.find_by_email(data["email"])
+        if user:
+            from account.push_notifications import N
+            from account.tasks import send_push_notification_task
+            title, body = N.PASSWORD_CHANGED.render()
+            send_push_notification_task.delay(
+                user_id=user.id,
+                title=title,
+                body=body,
+                data={"type": N.PASSWORD_CHANGED.key, "priority": N.PASSWORD_CHANGED.priority.value},
+            )
+
         return Response({"message": "Password has been reset. You can now log in."})
 
 
@@ -407,13 +420,60 @@ class ProfileMeView(RetrieveUpdateAPIView):
         return ProfileSerializer
 
     def patch(self, request, *args, **kwargs):
-        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        user = self.get_object()
+        old_alias = user.alias_name
+        old_phone = user.phone_number
+        old_first = user.first_name
+        old_last = user.last_name
+
+        serializer = self.get_serializer(user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         try:
             serializer.save()
         except ValidationError as exc:
             return Response({"detail": getattr(exc, "message_dict", exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ProfileSerializer(self.get_object()).data)
+
+        user.refresh_from_db()
+        self._fire_profile_change_notifications(
+            user=user,
+            old_alias=old_alias,
+            old_phone=old_phone,
+            old_first=old_first,
+            old_last=old_last,
+        )
+
+        return Response(ProfileSerializer(user).data)
+
+    def _fire_profile_change_notifications(self, *, user, old_alias, old_phone, old_first, old_last):
+        from account.push_notifications import N
+        from account.tasks import send_push_notification_task
+
+        if user.alias_name != old_alias:
+            title, body = N.ALIAS_NAME_CHANGED.render(alias_name=user.alias_name)
+            send_push_notification_task.delay(
+                user_id=user.id,
+                title=title,
+                body=body,
+                data={"type": N.ALIAS_NAME_CHANGED.key, "priority": N.ALIAS_NAME_CHANGED.priority.value},
+            )
+
+        if user.phone_number != old_phone:
+            title, body = N.PHONE_NUMBER_CHANGED.render()
+            send_push_notification_task.delay(
+                user_id=user.id,
+                title=title,
+                body=body,
+                data={"type": N.PHONE_NUMBER_CHANGED.key, "priority": N.PHONE_NUMBER_CHANGED.priority.value},
+            )
+
+        if user.first_name != old_first or user.last_name != old_last:
+            title, body = N.FULL_NAME_CHANGED.render()
+            send_push_notification_task.delay(
+                user_id=user.id,
+                title=title,
+                body=body,
+                data={"type": N.FULL_NAME_CHANGED.key, "priority": N.FULL_NAME_CHANGED.priority.value},
+            )
 
 
 class DeviceRegisterView(GenericAPIView):

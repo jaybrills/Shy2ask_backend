@@ -126,21 +126,24 @@ def send_push_notification_task(self, user_id: int, title: str, body: str, data:
     payload = data or {}
 
     # ── Persist to DB first (history is written even if FCM fails) ────────
-    try:
-        UserNotification.objects.create(
-            user_id=user_id,
-            title=title,
-            body=body,
-            notification_type=payload.get("type", ""),
-            priority=payload.get("priority", UserNotification.Priority.MEDIUM),
-            data=payload,
-        )
-    except Exception as exc:
-        # Never let a DB write failure block the actual push delivery
-        logger.error(
-            "Failed to persist UserNotification for user_id=%s: %s",
-            user_id, exc,
-        )
+    # Ignorable-priority notifications are not stored in the log.
+    priority = payload.get("priority", UserNotification.Priority.MEDIUM)
+    if priority != UserNotification.Priority.IGNORABLE:
+        try:
+            UserNotification.objects.create(
+                user_id=user_id,
+                title=title,
+                body=body,
+                notification_type=payload.get("type", ""),
+                priority=priority,
+                data=payload,
+            )
+        except Exception as exc:
+            # Never let a DB write failure block the actual push delivery
+            logger.error(
+                "Failed to persist UserNotification for user_id=%s: %s",
+                user_id, exc,
+            )
 
     # ── Deliver via FCM ───────────────────────────────────────────────────
     try:

@@ -94,7 +94,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
                     related_request=instance,
                     use_ai_enhance=False,
                     deliver_email=False,
-                    push_type="new_message",
+                    push_type="new_request",
                 )
         except Exception as e:
             print(f"Error sending initial notification: {e}")
