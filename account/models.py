@@ -502,7 +502,8 @@ class UserNotification(models.Model):
     class Priority(models.TextChoices):
         HIGH = "high", "High"
         MEDIUM = "medium", "Medium"
-
+        IGNORABLE = "ignorable", "Ignorable"
+    
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,

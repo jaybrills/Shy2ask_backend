@@ -67,14 +67,13 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
     }
 
     recipient_user = None
-    if related_request and related_request.user:
-        recipient_user = related_request.user
-        send_notification_websocket(recipient_user.id, payload)
-    elif recipient:
+    if recipient:
         from account.models import User
         recipient_user = User.objects.find_by_email(recipient)
-        if recipient_user:
-            send_notification_websocket(recipient_user.id, payload)
+    if not recipient_user and related_request and related_request.user:
+        recipient_user = related_request.user
+    if recipient_user:
+        send_notification_websocket(recipient_user.id, payload)
 
     if related_request:
         _notify_subscribers(
@@ -108,11 +107,13 @@ def _dispatch_push(*, user_id: int, push_type: str | None, fallback_title: str, 
             if related_request:
                 kwargs["tracking_code"] = getattr(related_request, "tracking_code", "")
             title, body = tpl.render(**kwargs)
+            priority = tpl.priority.value
         else:
             title = fallback_title
             body = fallback_body[:200]
+            priority = "medium"
 
-        data = {"type": push_type or "notification", "priority": "high"}
+        data = {"type": push_type or "notification", "priority": priority}
         if notification_id:
             data["notification_id"] = str(notification_id)
         if related_request:
