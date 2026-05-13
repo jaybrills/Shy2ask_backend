@@ -1,6 +1,7 @@
+import firebase_admin.auth
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
-from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.utils import extend_schema, extend_schema_field
 from rest_framework import permissions, serializers, status
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.authtoken.models import Token
@@ -107,6 +108,13 @@ class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["id", "email", "first_name", "last_name", "alias_name", "is_active", "date_joined"]
+
+
+class FirebaseLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(
+        write_only=True,
+        help_text="Firebase ID token obtained from the Google or Apple sign-in SDK.",
+    )
 
 
 class RegisterView(GenericAPIView):
@@ -547,5 +555,73 @@ class UserListView(ListAPIView):
                 "limit": limit,
                 "offset": offset,
                 "items": self.get_serializer(items, many=True).data,
+            }
+        )
+
+
+class FirebaseLoginView(GenericAPIView):
+    """
+    Authenticate via a Firebase ID token (Google or Apple Sign-In).
+
+    The mobile app obtains the ID token from the Firebase Auth SDK after the
+    user completes Google / Apple sign-in, then sends it here. The backend
+    verifies the token, finds or creates the local User, and returns a Bearer
+    token identical to what email/password login returns.
+
+    Response includes `is_new_user: true` on first-ever social login so the
+    app can decide whether to show a profile-completion screen.
+    """
+
+    serializer_class = FirebaseLoginSerializer
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        request=FirebaseLoginSerializer,
+        responses={200: ProfileSerializer},
+        summary="Login or register via Firebase (Google / Apple)",
+    )
+    def post(self, request):
+        from account.firebase_auth_service import get_or_create_user_from_firebase, verify_firebase_token
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            decoded = verify_firebase_token(serializer.validated_data["id_token"])
+        except firebase_admin.auth.RevokedIdTokenError:
+            return Response({"detail": "Token has been revoked. Please sign in again."}, status=status.HTTP_401_UNAUTHORIZED)
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return Response({"detail": "Token has expired. Please sign in again."}, status=status.HTTP_401_UNAUTHORIZED)
+        except firebase_admin.auth.InvalidIdTokenError:
+            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            user, is_new_user = get_or_create_user_from_firebase(decoded)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as exc:
+            return Response(
+                {"detail": getattr(exc, "message_dict", exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(
+            {
+                "token": token.key,
+                "is_new_user": is_new_user,
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "alias_name": user.alias_name,
+                    "phone_number": user.phone_number,
+                    "is_verified": user.is_verified,
+                },
             }
         )
