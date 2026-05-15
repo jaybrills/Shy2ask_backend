@@ -591,7 +591,7 @@ class SocialAccount(CreatedAtModel):
         db_table = "account_social_account"
         unique_together = [("provider", "provider_uid")]
         indexes = [
-            models.Index(fields=["provider", "provider_uid"], name="account_social_provider_uid_idx"),
+            models.Index(fields=["provider", "provider_uid"]),
         ]
 
     def __str__(self):
