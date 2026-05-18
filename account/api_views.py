@@ -13,6 +13,7 @@ from chat.models import ShyRequest
 
 from .alias_utils import normalize_alias_name
 from .models import ActiveUser, PendingVerificationUser, User
+from .permissions import IsVerified
 from .services import (
     create_and_send_reset_otp,
     create_and_send_verification_otp,
@@ -25,6 +26,8 @@ from .validators import validate_disposable_email
 class BearerTokenAuthentication(TokenAuthentication):
     keyword = "Bearer"
 
+
+# ── Serializers ───────────────────────────────────────────────────────────────
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -61,8 +64,31 @@ class ResetPasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField()
 
 
+class FirebaseLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(
+        write_only=True,
+        help_text="Firebase ID token obtained from the Google, Apple, or Phone sign-in SDK.",
+    )
+
+
+class VerifyPhoneSerializer(serializers.Serializer):
+    firebase_token = serializers.CharField(
+        help_text="Firebase ID token obtained after completing phone OTP verification in the app.",
+    )
+
+
+class CompletePhoneRegistrationSerializer(serializers.Serializer):
+    firebase_token = serializers.CharField(
+        help_text="The Firebase phone ID token from the initial firebase-login step.",
+    )
+    email = serializers.EmailField()
+    first_name = serializers.CharField(required=False, allow_blank=True, default="")
+    last_name = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     profile_picture = serializers.SerializerMethodField()
+    is_verified = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -74,21 +100,32 @@ class ProfileSerializer(serializers.ModelSerializer):
             "alias_name",
             "phone_number",
             "profile_picture",
+            "is_email_verified",
+            "is_phone_verified",
             "is_verified",
             "date_joined",
             "updated_at",
         ]
-        read_only_fields = ["id", "email", "is_verified", "date_joined", "updated_at", "profile_picture"]
+        read_only_fields = [
+            "id", "email", "is_email_verified", "is_phone_verified",
+            "is_verified", "date_joined", "updated_at", "profile_picture",
+        ]
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_profile_picture(self, obj):
         return obj.profile_picture.url if obj.profile_picture else None
 
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_verified(self, obj):
+        return obj.is_verified
+
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "alias_name", "phone_number", "profile_picture"]
+        fields = ["first_name", "last_name", "alias_name", "profile_picture"]
+        # phone_number is intentionally excluded — use POST /api/auth/verify-phone instead.
+        # Allowing direct edits would bypass Firebase phone verification.
 
 
 class DeviceRegisterSerializer(serializers.Serializer):
@@ -110,12 +147,24 @@ class UserListSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "first_name", "last_name", "alias_name", "is_active", "date_joined"]
 
 
-class FirebaseLoginSerializer(serializers.Serializer):
-    id_token = serializers.CharField(
-        write_only=True,
-        help_text="Firebase ID token obtained from the Google or Apple sign-in SDK.",
-    )
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _verification_user_payload(user: User) -> dict:
+    """Consistent user payload included in every auth response."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "alias_name": user.alias_name,
+        "phone_number": user.phone_number,
+        "is_email_verified": user.is_email_verified,
+        "is_phone_verified": user.is_phone_verified,
+        "is_verified": user.is_verified,
+    }
+
+
+# ── Auth views ────────────────────────────────────────────────────────────────
 
 class RegisterView(GenericAPIView):
     serializer_class = RegisterSerializer
@@ -133,25 +182,22 @@ class RegisterView(GenericAPIView):
 
         existing = User.objects.find_by_email(data["email"])
         if existing:
-            if not existing.is_verified:
+            if not existing.is_email_verified:
                 pending_user = PendingVerificationUser.objects.get(pk=existing.pk)
                 create_and_send_verification_otp(pending_user)
                 token, _ = Token.objects.get_or_create(user=pending_user)
                 return Response(
                     {
-                        "id": pending_user.id,
-                        "email": pending_user.email,
-                        "first_name": pending_user.first_name,
-                        "last_name": pending_user.last_name,
-                        "alias_name": pending_user.alias_name,
-                        "phone_number": pending_user.phone_number,
-                        "is_verified": False,
+                        **_verification_user_payload(pending_user),
                         "token": token.key,
                         "message": "Verification OTP resent. Please verify your email.",
                     },
                     status=status.HTTP_201_CREATED,
                 )
-            return Response({"detail": "A user with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "A user with this email already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user = User.objects.create_user(
@@ -163,21 +209,16 @@ class RegisterView(GenericAPIView):
                 phone_number=data.get("phone_number", ""),
             )
         except ValidationError as exc:
-            return Response({"detail": getattr(exc, "message_dict", exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": getattr(exc, "message_dict", exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user.is_verified = False
-        user.save(update_fields=["is_verified"])
         create_and_send_verification_otp(user)
         token, _ = Token.objects.get_or_create(user=user)
         return Response(
             {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "alias_name": user.alias_name,
-                "phone_number": user.phone_number,
-                "is_verified": False,
+                **_verification_user_payload(user),
                 "token": token.key,
                 "message": "Please verify your email with the OTP sent to your inbox.",
             },
@@ -198,30 +239,12 @@ class LoginView(GenericAPIView):
             password=serializer.validated_data["password"],
         )
         if user is None or not user.is_active:
-            return Response({"detail": "Invalid email or password."}, status=status.HTTP_401_UNAUTHORIZED)
-        if not getattr(user, "is_verified", True):
             return Response(
-                {
-                    "detail": "Please verify your email first. Check your inbox for the OTP.",
-                    "code": "email_not_verified",
-                },
-                status=status.HTTP_403_FORBIDDEN,
+                {"detail": "Invalid email or password."},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
         token, _ = Token.objects.get_or_create(user=user)
-        return Response(
-            {
-                "token": token.key,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "alias_name": user.alias_name,
-                    "phone_number": user.phone_number,
-                    "is_verified": user.is_verified,
-                },
-            }
-        )
+        return Response({"token": token.key, "user": _verification_user_payload(user)})
 
 
 class ForgotPasswordView(GenericAPIView):
@@ -244,9 +267,15 @@ class ResetPasswordView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         if len(data["new_password"]) < 8:
-            return Response({"detail": "Password must be at least 8 characters."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Password must be at least 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not verify_otp_and_reset_password(data["email"], data["otp"], data["new_password"]):
-            return Response({"detail": "Invalid or expired OTP. Request a new code."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Invalid or expired OTP. Request a new code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         user = User.objects.find_by_email(data["email"])
         if user:
@@ -282,20 +311,10 @@ class VerifyEmailView(GenericAPIView):
                 {"detail": "Invalid or expired OTP code. Request a new one via resend-verification."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(
-            {
-                "message": "Email verified successfully.",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "alias_name": user.alias_name,
-                    "phone_number": user.phone_number,
-                    "is_verified": user.is_verified,
-                },
-            }
-        )
+        return Response({
+            "message": "Email verified successfully.",
+            "user": _verification_user_payload(user),
+        })
 
 
 class ResendVerificationView(GenericAPIView):
@@ -314,11 +333,274 @@ class ResendVerificationView(GenericAPIView):
         user = PendingVerificationUser.objects.find_by_email(email)
         if not user:
             return Response({"message": "If an account exists for this email, a verification code has been sent."})
-        if user.is_verified:
+        if user.is_email_verified:
             return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
         create_and_send_verification_otp(user)
         return Response({"message": "Verification code sent. Check your email."})
 
+
+class FirebaseLoginView(GenericAPIView):
+    """
+    Authenticate via a Firebase ID token (Google, Apple, or Phone Sign-In).
+
+    Google / Apple:
+      Always returns a token + user. is_new_user=true on first login.
+      is_email_verified will be True; is_phone_verified may be False — frontend
+      should prompt phone verification if so.
+
+    Phone (new user):
+      Returns { is_new_user: true, phone_number } with NO token.
+      Frontend must collect email/name and call POST /api/auth/complete-phone-registration.
+
+    Phone (existing user):
+      Returns token + user as normal.
+    """
+
+    serializer_class = FirebaseLoginSerializer
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        request=FirebaseLoginSerializer,
+        summary="Login or register via Firebase (Google / Apple / Phone)",
+    )
+    def post(self, request):
+        from account.firebase_auth_service import get_firebase_login_result, verify_firebase_token
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            decoded = verify_firebase_token(serializer.validated_data["id_token"])
+        except firebase_admin.auth.RevokedIdTokenError:
+            return Response(
+                {"detail": "Token has been revoked. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return Response(
+                {"detail": "Token has expired. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.InvalidIdTokenError:
+            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            user, is_new_user = get_firebase_login_result(decoded)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as exc:
+            return Response(
+                {"detail": getattr(exc, "message_dict", exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # New phone user — no account yet, redirect to registration
+        if user is None:
+            return Response({
+                "is_new_user": True,
+                "phone_number": decoded.get("phone_number", ""),
+            }, status=status.HTTP_200_OK)
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({
+            "token": token.key,
+            "is_new_user": is_new_user,
+            "user": _verification_user_payload(user),
+        })
+
+
+class CompletePhoneRegistrationView(GenericAPIView):
+    """
+    Second step for phone-first registrations.
+
+    The frontend re-sends the same Firebase phone token (proves the phone is still
+    authenticated), plus the user's email and name. We create the account,
+    mark phone as verified, and send an email OTP.
+    """
+
+    serializer_class = CompletePhoneRegistrationSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from account.firebase_auth_service import verify_firebase_token
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Re-verify the Firebase phone token
+        try:
+            decoded = verify_firebase_token(data["firebase_token"])
+        except firebase_admin.auth.RevokedIdTokenError:
+            return Response(
+                {"detail": "Token has been revoked. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return Response(
+                {"detail": "Token has expired. Please sign in with your phone again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.InvalidIdTokenError:
+            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        sign_in_provider = decoded.get("firebase", {}).get("sign_in_provider", "")
+        if sign_in_provider != "phone":
+            return Response(
+                {"detail": "This endpoint only accepts phone authentication tokens."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phone_number: str = decoded.get("phone_number", "")
+        uid: str = decoded["uid"]
+        email: str = data["email"]
+
+        try:
+            validate_disposable_email(email)
+        except ValidationError as exc:
+            return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Guard: email already registered
+        if User.objects.find_by_email(email):
+            return Response(
+                {"detail": "An account with this email already exists. Please log in instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Guard: phone already registered (race condition / retry)
+        if User.objects.filter(phone_number=phone_number).exists():
+            return Response(
+                {"detail": "This phone number is already linked to an account. Please log in."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.db import transaction
+        from .models import SocialAccount
+
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    email=email,
+                    password=None,
+                    first_name=data.get("first_name", ""),
+                    last_name=data.get("last_name", ""),
+                    phone_number=phone_number,
+                )
+                user.set_unusable_password()
+                user.is_phone_verified = True
+                user.save(update_fields=["is_phone_verified", "updated_at"])
+
+                SocialAccount.objects.create(
+                    user=user,
+                    provider=SocialAccount.PROVIDER_PHONE,
+                    provider_uid=uid,
+                    email="",
+                )
+        except ValidationError as exc:
+            return Response(
+                {"detail": getattr(exc, "message_dict", exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        create_and_send_verification_otp(user)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(
+            {
+                **_verification_user_payload(user),
+                "token": token.key,
+                "message": "Account created. Please verify your email with the OTP sent to your inbox.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class VerifyPhoneView(GenericAPIView):
+    """
+    Verify a phone number for an already-authenticated user.
+
+    Called after the user completes Firebase phone OTP verification in the app.
+    Works for:
+      - Email/password users who need to add phone verification.
+      - Google/Apple users who need to add phone verification.
+    """
+
+    serializer_class = VerifyPhoneSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def post(self, request):
+        from account.firebase_auth_service import verify_firebase_token
+        from .models import SocialAccount
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            decoded = verify_firebase_token(serializer.validated_data["firebase_token"])
+        except firebase_admin.auth.RevokedIdTokenError:
+            return Response(
+                {"detail": "Token has been revoked. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return Response(
+                {"detail": "Token has expired. Please complete phone verification again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.InvalidIdTokenError:
+            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        sign_in_provider = decoded.get("firebase", {}).get("sign_in_provider", "")
+        if sign_in_provider != "phone":
+            return Response(
+                {"detail": "This endpoint only accepts phone authentication tokens."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phone_number: str = decoded.get("phone_number", "")
+        uid: str = decoded["uid"]
+        user = request.user
+
+        # Guard: phone already linked to a DIFFERENT account
+        conflicting = (
+            User.objects
+            .filter(phone_number=phone_number)
+            .exclude(pk=user.pk)
+            .first()
+        )
+        if conflicting:
+            return Response(
+                {"detail": "This phone number is already linked to another account."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        from django.db import transaction
+        with transaction.atomic():
+            user.phone_number = phone_number
+            user.is_phone_verified = True
+            user.save(update_fields=["phone_number", "is_phone_verified", "updated_at"])
+
+            SocialAccount.objects.update_or_create(
+                provider=SocialAccount.PROVIDER_PHONE,
+                provider_uid=uid,
+                defaults={"user": user, "email": ""},
+            )
+
+        return Response({
+            "message": "Phone number verified successfully.",
+            "user": _verification_user_payload(user),
+        })
+
+
+# ── Profile ───────────────────────────────────────────────────────────────────
 
 class CheckEmailView(GenericAPIView):
     serializer_class = EmailSerializer
@@ -415,7 +697,7 @@ class UserNameByEmailView(GenericAPIView):
 
 class ProfileMeView(RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
     authentication_classes = [BearerTokenAuthentication]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
@@ -439,7 +721,10 @@ class ProfileMeView(RetrieveUpdateAPIView):
         try:
             serializer.save()
         except ValidationError as exc:
-            return Response({"detail": getattr(exc, "message_dict", exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": getattr(exc, "message_dict", exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         user.refresh_from_db()
         self._fire_profile_change_notifications(
@@ -487,11 +772,10 @@ class ProfileMeView(RetrieveUpdateAPIView):
 class DeviceRegisterView(GenericAPIView):
     """
     Register (or re-register) a device for push notifications.
-
-    Call this on every app launch after obtaining a fresh FCM token.
-    If the token already exists under a different user (account switch / re-install),
-    ownership is transferred automatically.
+    Requires IsAuthenticated (not IsVerified) so users can register devices
+    during the verification flow and receive OTP notifications.
     """
+
     serializer_class = DeviceRegisterSerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [BearerTokenAuthentication]
@@ -510,10 +794,8 @@ class DeviceRegisterView(GenericAPIView):
 
 
 class DeviceUnregisterView(GenericAPIView):
-    """
-    Unregister a device. Call this on logout so the user stops receiving
-    push notifications on that device.
-    """
+    """Unregister a device. Call this on logout."""
+
     serializer_class = DeviceUnregisterSerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [BearerTokenAuthentication]
@@ -548,80 +830,12 @@ class UserListView(ListAPIView):
         queryset = self.get_queryset()
         limit = int(request.query_params.get("limit", 20))
         offset = int(request.query_params.get("offset", 0))
-        items = queryset[offset : offset + limit]
+        items = queryset[offset: offset + limit]
         return Response(
             {
                 "count": queryset.count(),
                 "limit": limit,
                 "offset": offset,
                 "items": self.get_serializer(items, many=True).data,
-            }
-        )
-
-
-class FirebaseLoginView(GenericAPIView):
-    """
-    Authenticate via a Firebase ID token (Google or Apple Sign-In).
-
-    The mobile app obtains the ID token from the Firebase Auth SDK after the
-    user completes Google / Apple sign-in, then sends it here. The backend
-    verifies the token, finds or creates the local User, and returns a Bearer
-    token identical to what email/password login returns.
-
-    Response includes `is_new_user: true` on first-ever social login so the
-    app can decide whether to show a profile-completion screen.
-    """
-
-    serializer_class = FirebaseLoginSerializer
-    permission_classes = [permissions.AllowAny]
-
-    @extend_schema(
-        request=FirebaseLoginSerializer,
-        responses={200: ProfileSerializer},
-        summary="Login or register via Firebase (Google / Apple)",
-    )
-    def post(self, request):
-        from account.firebase_auth_service import get_or_create_user_from_firebase, verify_firebase_token
-
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            decoded = verify_firebase_token(serializer.validated_data["id_token"])
-        except firebase_admin.auth.RevokedIdTokenError:
-            return Response({"detail": "Token has been revoked. Please sign in again."}, status=status.HTTP_401_UNAUTHORIZED)
-        except firebase_admin.auth.ExpiredIdTokenError:
-            return Response({"detail": "Token has expired. Please sign in again."}, status=status.HTTP_401_UNAUTHORIZED)
-        except firebase_admin.auth.InvalidIdTokenError:
-            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
-        except RuntimeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        try:
-            user, is_new_user = get_or_create_user_from_firebase(decoded)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except PermissionError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
-        except ValidationError as exc:
-            return Response(
-                {"detail": getattr(exc, "message_dict", exc.messages)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response(
-            {
-                "token": token.key,
-                "is_new_user": is_new_user,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "alias_name": user.alias_name,
-                    "phone_number": user.phone_number,
-                    "is_verified": user.is_verified,
-                },
             }
         )

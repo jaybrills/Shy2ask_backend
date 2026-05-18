@@ -76,11 +76,21 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
             'Unselect this instead of deleting accounts.'
         ),
     )
-    is_verified = models.BooleanField(
-        _('verified'),
+    is_email_verified = models.BooleanField(
+        _('email verified'),
         default=False,
-        help_text=_('Designates whether this user has verified their email with OTP.'),
+        help_text=_('Designates whether this user has verified their email address.'),
     )
+    is_phone_verified = models.BooleanField(
+        _('phone verified'),
+        default=False,
+        help_text=_('Designates whether this user has verified their phone number via Firebase.'),
+    )
+
+    @property
+    def is_verified(self) -> bool:
+        """True only when both email and phone are verified."""
+        return self.is_email_verified and self.is_phone_verified
     date_joined = models.DateTimeField(_('date joined'), auto_now_add=True)
 
     objects = UserManager()
@@ -562,9 +572,11 @@ class SocialAccount(CreatedAtModel):
 
     PROVIDER_GOOGLE = "google"
     PROVIDER_APPLE = "apple"
+    PROVIDER_PHONE = "phone"
     PROVIDER_CHOICES = [
         (PROVIDER_GOOGLE, "Google"),
         (PROVIDER_APPLE, "Apple"),
+        (PROVIDER_PHONE, "Phone"),
     ]
 
     user = models.ForeignKey(
