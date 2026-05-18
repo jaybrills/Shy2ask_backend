@@ -14,7 +14,7 @@ def copy_is_verified_to_email(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("account", "0011_user_notification"),
+        ("account", "0013_rename_account_social_provider_uid_idx_account_soc_provide_d2fe83_idx"),
     ]
 
     operations = [
