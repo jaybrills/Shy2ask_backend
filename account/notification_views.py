@@ -18,13 +18,14 @@ Query params for GET /api/notifications/:
 import logging
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import permissions, serializers, status
+from rest_framework import serializers, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from account.api_views import BearerTokenAuthentication
 from account.models import UserNotification
+from account.permissions import IsVerified
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class NotificationListView(APIView):
     """
 
     authentication_classes = [BearerTokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @extend_schema(
         summary="List notifications for the current user",
@@ -130,7 +131,7 @@ class UnreadCountView(APIView):
     """Return the number of unread notifications for the authenticated user."""
 
     authentication_classes = [BearerTokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @extend_schema(
         summary="Get unread notification count",
@@ -153,7 +154,7 @@ class MarkNotificationReadView(APIView):
     """
 
     authentication_classes = [BearerTokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @extend_schema(
         summary="Mark a notification as read",
@@ -186,7 +187,7 @@ class MarkAllReadView(APIView):
     """Mark every unread notification for the authenticated user as read."""
 
     authentication_classes = [BearerTokenAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @extend_schema(
         summary="Mark all notifications as read",

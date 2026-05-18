@@ -8,10 +8,12 @@ class UserQuerySet(models.QuerySet):
         return self.filter(is_active=True)
 
     def verified(self):
-        return self.filter(is_verified=True)
+        return self.filter(is_email_verified=True, is_phone_verified=True)
 
     def unverified(self):
-        return self.filter(is_verified=False)
+        return self.filter(
+            models.Q(is_email_verified=False) | models.Q(is_phone_verified=False)
+        )
 
     def staff(self):
         return self.filter(is_staff=True)

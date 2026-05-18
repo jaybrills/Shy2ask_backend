@@ -3,6 +3,7 @@ from django.urls import path
 from .api_views import (
     CheckAliasView,
     CheckEmailView,
+    CompletePhoneRegistrationView,
     DeviceRegisterView,
     DeviceUnregisterView,
     FirebaseLoginView,
@@ -15,6 +16,7 @@ from .api_views import (
     UserNameByEmailView,
     UserListView,
     VerifyEmailView,
+    VerifyPhoneView,
 )
 from .notification_views import (
     MarkAllReadView,
@@ -39,6 +41,10 @@ urlpatterns = [
     path("auth/verify-email/", VerifyEmailView.as_view()),
     path("auth/resend-verification", ResendVerificationView.as_view()),
     path("auth/resend-verification/", ResendVerificationView.as_view()),
+    path("auth/verify-phone", VerifyPhoneView.as_view()),
+    path("auth/verify-phone/", VerifyPhoneView.as_view()),
+    path("auth/complete-phone-registration", CompletePhoneRegistrationView.as_view()),
+    path("auth/complete-phone-registration/", CompletePhoneRegistrationView.as_view()),
     path("auth/check-email", CheckEmailView.as_view()),
     path("auth/check-email/", CheckEmailView.as_view()),
     path("auth/check-alias", CheckAliasView.as_view()),

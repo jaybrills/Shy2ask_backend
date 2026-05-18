@@ -20,6 +20,7 @@ from .message_service import (
 )
 from .websocket_utils import send_chat_message_websocket, serialize_message_for_websocket
 from account.api_views import BearerTokenAuthentication
+from account.permissions import IsVerified
 from .serializers import (
     BulkSoftDeleteSerializer,
     CensorImageResultSerializer,
@@ -224,7 +225,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         messages_qs = self._visible_messages_qs(request, shy_request, tracking_code=tracking_code)
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=tracking_code))
 
-    @action(detail=False, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="bulk-delete")
+    @action(detail=False, methods=["post"], permission_classes=[IsVerified], url_path="bulk-delete")
     def bulk_delete(self, request):
         payload = BulkSoftDeleteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -233,7 +234,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         deleted_count = queryset.soft_delete()
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["delete"], permission_classes=[permissions.IsAuthenticated], url_path=r"messages/(?P<message_id>[^/.]+)")
+    @action(detail=True, methods=["delete"], permission_classes=[IsVerified], url_path=r"messages/(?P<message_id>[^/.]+)")
     def delete_message(self, request, pk=None, message_id=None):
         shy_request = get_object_or_404(ShyRequest.objects, pk=pk)
         if not self._can_manage_request(request, shy_request):
@@ -245,7 +246,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You are not allowed to delete this message."}, status=status.HTTP_403_FORBIDDEN)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated], url_path="messages/bulk-delete")
+    @action(detail=True, methods=["post"], permission_classes=[IsVerified], url_path="messages/bulk-delete")
     def bulk_delete_messages(self, request, pk=None):
         payload = BulkSoftDeleteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -261,7 +262,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         ).soft_delete_for_actor(self._viewer_role(request, shy_request))
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=True, methods=["post"], permission_classes=[IsVerified])
     def block(self, request, pk=None):
         payload = RequestBlockSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
@@ -338,7 +339,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=normalized_tracking))
 
     @extend_schema(responses=ShyRequestSerializer(many=True), tags=["Requests"])
-    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=False, methods=["get"], permission_classes=[IsVerified])
     def unreplied(self, request):
         queryset = self._with_target_reply_state(
             ShyRequest.objects.with_related().for_participant(user=request.user)
@@ -360,7 +361,7 @@ class FAQListView(APIView):
 
 class SupportTicketViewSet(viewsets.ModelViewSet):
     serializer_class = SupportTicketSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
     authentication_classes = [BearerTokenAuthentication]
     http_method_names = ["get", "post"]
 
@@ -379,7 +380,7 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         responses=SupportTicketReplySerializer,
         tags=["Support"],
     )
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=True, methods=["post"], permission_classes=[IsVerified])
     def replies(self, request, pk=None):
         ticket = get_object_or_404(self.get_queryset(), pk=pk)
         payload = SupportTicketReplyCreateSerializer(data=request.data)
@@ -484,7 +485,7 @@ class CensorImageView(APIView):
 
 
 class SubscriptionListCreateView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
     authentication_classes = [BearerTokenAuthentication]
 
     @extend_schema(responses=SubscriptionSerializer(many=True), tags=["Subscriptions"])
@@ -553,7 +554,7 @@ class SubscriptionListCreateView(APIView):
 
 
 class SubscriptionDetailView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
     authentication_classes = [BearerTokenAuthentication]
 
     @extend_schema(responses={204: None}, tags=["Subscriptions"])
@@ -567,7 +568,7 @@ class SubscriptionDetailView(APIView):
 
 
 class UnreadNotificationListView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsVerified]
     authentication_classes = [BearerTokenAuthentication]
 
     @extend_schema(tags=["Notifications"])

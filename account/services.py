@@ -89,7 +89,7 @@ def verify_email_otp(email: str, otp_code: str):
     )
     if not record:
         return None
-    user.is_verified = True
-    user.save(update_fields=["is_verified", "updated_at"])
+    user.is_email_verified = True
+    user.save(update_fields=["is_email_verified", "updated_at"])
     record.delete()
     return user

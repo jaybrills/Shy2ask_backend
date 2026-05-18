@@ -2,16 +2,22 @@
 Firebase Auth service — verify ID tokens and resolve/create local users.
 
 Flow:
-  1. Mobile SDK signs in via Google or Apple → receives a Firebase ID token.
+  1. Mobile SDK signs in via Google, Apple, or Phone → receives a Firebase ID token.
   2. Token is sent to POST /api/auth/firebase-login.
   3. verify_firebase_token() validates it against Firebase (checks expiry + revocation).
-  4. get_or_create_user_from_firebase() finds or creates the local User and links
-     the provider via SocialAccount.
+  4. get_firebase_login_result() dispatches to the correct handler by provider.
+
+Provider behaviour:
+  - google.com / apple.com  →  find-or-create user, set is_email_verified=True
+  - phone                   →  find existing user by SocialAccount or phone_number.
+                               If not found returns (None, True) — caller must redirect
+                               frontend to complete-phone-registration.
 
 Security:
   - check_revoked=True detects tokens from deleted/disabled Firebase accounts.
   - email_verified is required before auto-linking to an existing email account
     to prevent account-takeover via an unverified provider email.
+  - Phone number collision links the provider to the existing account safely.
 """
 import logging
 
@@ -23,7 +29,7 @@ from account.models import SocialAccount, User
 
 logger = logging.getLogger(__name__)
 
-_FIREBASE_PROVIDER_MAP = {
+_SOCIAL_PROVIDER_MAP = {
     "google.com": SocialAccount.PROVIDER_GOOGLE,
     "apple.com": SocialAccount.PROVIDER_APPLE,
 }
@@ -45,30 +51,111 @@ def verify_firebase_token(id_token: str) -> dict:
     return firebase_admin.auth.verify_id_token(id_token, app=app, check_revoked=True)
 
 
-def get_or_create_user_from_firebase(decoded_token: dict) -> tuple[User, bool]:
+def get_firebase_login_result(decoded_token: dict) -> tuple:
     """
-    Return (user, created).
+    Unified entry point for all Firebase providers.
+
+    Returns (user, is_new_user).
+      - Google / Apple: user is always a User instance.
+      - Phone (existing): user is a User instance, is_new_user=False.
+      - Phone (new):      user is None, is_new_user=True.
+        Caller must return { is_new_user: true, phone_number } and redirect
+        frontend to POST /api/auth/complete-phone-registration.
+
+    Raises:
+        ValueError        — unsupported provider
+        PermissionError   — account deactivated
+    """
+    sign_in_provider: str = decoded_token.get("firebase", {}).get("sign_in_provider", "")
+
+    if sign_in_provider == "phone":
+        return _handle_phone_login(decoded_token)
+
+    return _handle_social_login(decoded_token)
+
+
+# ── Phone ─────────────────────────────────────────────────────────────────────
+
+def _handle_phone_login(decoded_token: dict) -> tuple:
+    """
+    Look up an existing user by SocialAccount (UID) or phone_number.
+    Returns (None, True) for brand-new phone users — no user is created here.
+    """
+    uid: str = decoded_token["uid"]
+    phone_number: str = decoded_token.get("phone_number", "")
+
+    with transaction.atomic():
+        # 1. Existing SocialAccount (repeat login — fastest path)
+        try:
+            social = (
+                SocialAccount.objects
+                .select_related("user")
+                .select_for_update()
+                .get(provider=SocialAccount.PROVIDER_PHONE, provider_uid=uid)
+            )
+            user = social.user
+            if not user.is_active:
+                raise PermissionError("This account has been deactivated.")
+            logger.info("Firebase phone login: existing account uid=%s user_id=%s", uid, user.id)
+            return user, False
+        except SocialAccount.DoesNotExist:
+            pass
+
+        # 2. Existing user matched by phone_number (phone re-used on new device)
+        if phone_number:
+            user = (
+                User.objects
+                .filter(phone_number=phone_number)
+                .select_for_update()
+                .first()
+            )
+            if user is not None:
+                if not user.is_active:
+                    raise PermissionError("This account has been deactivated.")
+                SocialAccount.objects.create(
+                    user=user,
+                    provider=SocialAccount.PROVIDER_PHONE,
+                    provider_uid=uid,
+                    email="",
+                )
+                user.is_phone_verified = True
+                user.save(update_fields=["is_phone_verified", "updated_at"])
+                logger.info(
+                    "Firebase phone login: linked phone to existing user_id=%s (phone match)",
+                    user.id,
+                )
+                return user, False
+
+        # 3. New phone user — do NOT create here, signal frontend
+        logger.info("Firebase phone login: new phone user uid=%s phone=%s", uid, phone_number)
+        return None, True
+
+
+# ── Google / Apple ────────────────────────────────────────────────────────────
+
+def _handle_social_login(decoded_token: dict) -> tuple:
+    """
+    Find or create a user from a Google or Apple Firebase token.
 
     Lookup order:
       1. Existing SocialAccount  →  return its linked user (fast path on repeat logins)
       2. Existing User by email  →  link provider, return user (email collision)
          — only when email_verified=True in the token to prevent account-takeover
       3. Create new User + SocialAccount  (first-time social signup)
-
-    The whole operation runs inside a transaction with select_for_update on any
-    existing user row so concurrent requests for the same UID cannot create duplicates.
     """
     uid: str = decoded_token["uid"]
     email: str = (decoded_token.get("email") or "").lower().strip()
     email_verified: bool = bool(decoded_token.get("email_verified", False))
     sign_in_provider: str = decoded_token.get("firebase", {}).get("sign_in_provider", "")
 
-    provider = _FIREBASE_PROVIDER_MAP.get(sign_in_provider)
+    provider = _SOCIAL_PROVIDER_MAP.get(sign_in_provider)
     if not provider:
-        raise ValueError(f"Unsupported sign-in provider: '{sign_in_provider}'. Supported: google.com, apple.com")
+        raise ValueError(
+            f"Unsupported sign-in provider: '{sign_in_provider}'. Supported: google.com, apple.com, phone"
+        )
 
     with transaction.atomic():
-        # ── 1. Already linked ─────────────────────────────────────────────
+        # 1. Already linked
         try:
             social = (
                 SocialAccount.objects
@@ -79,12 +166,15 @@ def get_or_create_user_from_firebase(decoded_token: dict) -> tuple[User, bool]:
             user = social.user
             if not user.is_active:
                 raise PermissionError("This account has been deactivated.")
-            logger.info("Firebase login: existing social account uid=%s provider=%s user_id=%s", uid, provider, user.id)
+            logger.info(
+                "Firebase social login: existing account uid=%s provider=%s user_id=%s",
+                uid, provider, user.id,
+            )
             return user, False
         except SocialAccount.DoesNotExist:
             pass
 
-        # ── 2. Email collision — link to existing account ─────────────────
+        # 2. Email collision — link to existing account
         user = None
         if email and email_verified:
             user = (
@@ -103,12 +193,12 @@ def get_or_create_user_from_firebase(decoded_token: dict) -> tuple[User, bool]:
                     email=email,
                 )
                 logger.info(
-                    "Firebase login: linked %s to existing user_id=%s (email match)",
+                    "Firebase social login: linked %s to existing user_id=%s (email match)",
                     provider, user.id,
                 )
                 return user, False
 
-        # ── 3. Brand-new user ─────────────────────────────────────────────
+        # 3. Brand-new user
         user = _create_social_user(decoded_token)
         SocialAccount.objects.create(
             user=user,
@@ -116,7 +206,7 @@ def get_or_create_user_from_firebase(decoded_token: dict) -> tuple[User, bool]:
             provider_uid=uid,
             email=email,
         )
-        logger.info("Firebase login: created new user_id=%s via %s", user.id, provider)
+        logger.info("Firebase social login: created new user_id=%s via %s", user.id, provider)
         return user, True
 
 
@@ -131,8 +221,9 @@ def _create_social_user(decoded_token: dict) -> User:
         email=email,
         first_name=first_name,
         last_name=last_name,
-        is_verified=True,  # Firebase already verified the identity
+        is_email_verified=True,   # Firebase already verified the email
+        is_phone_verified=False,  # Phone must still be verified separately
     )
-    user.set_unusable_password()  # social users cannot use email/password login
+    user.set_unusable_password()
     user.save()
     return user

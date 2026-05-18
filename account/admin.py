@@ -57,7 +57,7 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
         "activity_state",
         "date_joined",
     )
-    list_filter = ("is_verified", "is_staff", "is_superuser", "is_active", "date_joined")
+    list_filter = ("is_email_verified", "is_phone_verified", "is_staff", "is_superuser", "is_active", "date_joined")
     search_fields = ("email", "alias_name", "first_name", "last_name", "phone_number")
     ordering = ("-date_joined",)
     readonly_fields = ("date_joined", "updated_at", "last_login", "last_seen")
@@ -75,7 +75,7 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
                 )
             },
         ),
-        (_("Verification"), {"fields": ("is_verified", "last_seen")}),
+        (_("Verification"), {"fields": ("is_email_verified", "is_phone_verified", "last_seen")}),
         (
             _("Permissions"),
             {
@@ -106,7 +106,13 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
 
     @admin.display(description="Verified")
     def verification_state(self, obj):
-        return status_badge("Verified" if obj.is_verified else "Pending", tone="#119279" if obj.is_verified else "#b45309")
+        if obj.is_verified:
+            label, tone = "Verified", "#119279"
+        elif obj.is_email_verified or obj.is_phone_verified:
+            label, tone = "Partial", "#b45309"
+        else:
+            label, tone = "Pending", "#b42318"
+        return status_badge(label, tone=tone)
 
     @admin.display(description="Staff")
     def staff_state(self, obj):
