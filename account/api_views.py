@@ -413,6 +413,75 @@ class FirebaseLoginView(GenericAPIView):
         })
 
 
+class GoogleSignupView(GenericAPIView):
+    """
+    Register a new account via Google Sign-In (Firebase) — signup only.
+
+    Accepts the Firebase Google ID token. If the Google account or email is
+    already linked to an existing user, returns 409 so the frontend can
+    redirect to login instead of silently logging in.
+    """
+
+    serializer_class = FirebaseLoginSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from account.firebase_auth_service import handle_google_signup, verify_firebase_token
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            decoded = verify_firebase_token(serializer.validated_data["id_token"])
+        except firebase_admin.auth.RevokedIdTokenError:
+            return Response(
+                {"detail": "Token has been revoked. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return Response(
+                {"detail": "Token has expired. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except firebase_admin.auth.InvalidIdTokenError:
+            return Response({"detail": "Invalid token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            validate_disposable_email(decoded.get("email", ""))
+        except ValidationError as exc:
+            return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = handle_google_signup(decoded)
+        except ValueError as exc:
+            error = str(exc)
+            if error == "already_registered":
+                return Response(
+                    {"detail": "This Google account is already registered. Please log in instead."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if error == "email_exists":
+                return Response(
+                    {"detail": "An account with this email already exists. Please log in instead."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response(
+            {
+                **_verification_user_payload(user),
+                "token": token.key,
+                "is_new_user": True,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class CompletePhoneRegistrationView(GenericAPIView):
     """
     Second step for phone-first registrations.
