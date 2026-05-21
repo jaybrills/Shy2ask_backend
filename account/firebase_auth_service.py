@@ -210,6 +210,59 @@ def _handle_social_login(decoded_token: dict) -> tuple:
         return user, True
 
 
+def handle_google_signup(decoded_token: dict) -> User:
+    """
+    Create a brand-new user from a Google Firebase token (signup-only).
+
+    Raises:
+        ValueError        — wrong provider, missing/unverified email, or account already exists
+        PermissionError   — account deactivated (email collision with deactivated account)
+    """
+    sign_in_provider: str = decoded_token.get("firebase", {}).get("sign_in_provider", "")
+    if sign_in_provider != "google.com":
+        raise ValueError("This endpoint only accepts Google authentication tokens.")
+
+    uid: str = decoded_token["uid"]
+    email: str = (decoded_token.get("email") or "").lower().strip()
+    email_verified: bool = bool(decoded_token.get("email_verified", False))
+
+    if not email:
+        raise ValueError("Google account must have an email address.")
+    if not email_verified:
+        raise ValueError("Google account email is not verified.")
+
+    with transaction.atomic():
+        if (
+            SocialAccount.objects
+            .filter(provider=SocialAccount.PROVIDER_GOOGLE, provider_uid=uid)
+            .select_for_update()
+            .exists()
+        ):
+            raise ValueError("already_registered")
+
+        existing_user = (
+            User.objects
+            .filter(email=email)
+            .select_for_update()
+            .first()
+        )
+        if existing_user is not None:
+            if not existing_user.is_active:
+                raise PermissionError("This account has been deactivated.")
+            raise ValueError("email_exists")
+
+        user = _create_social_user(decoded_token)
+        SocialAccount.objects.create(
+            user=user,
+            provider=SocialAccount.PROVIDER_GOOGLE,
+            provider_uid=uid,
+            email=email,
+        )
+
+    logger.info("Google signup: created new user_id=%s email=%s", user.id, email)
+    return user
+
+
 def _create_social_user(decoded_token: dict) -> User:
     email: str = (decoded_token.get("email") or "").lower().strip()
     display_name: str = decoded_token.get("name") or ""
