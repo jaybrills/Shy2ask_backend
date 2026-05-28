@@ -344,7 +344,7 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
         IN_PROGRESS = ("in_progress", "In progress")
         COMPLETED = ("completed", "Completed")
         REJECTED = ("rejected", "Rejected")
-
+        
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
