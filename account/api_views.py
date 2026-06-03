@@ -415,11 +415,11 @@ class FirebaseLoginView(GenericAPIView):
 
 class GoogleSignupView(GenericAPIView):
     """
-    Register a new account via Google Sign-In (Firebase) — signup only.
+    Register or sign in via Google Sign-In (Firebase).
 
-    Accepts the Firebase Google ID token. If the Google account or email is
-    already linked to an existing user, returns 409 so the frontend can
-    redirect to login instead of silently logging in.
+    Accepts the Firebase Google ID token. If the account already exists
+    (by Google UID or email), returns the token and user details with
+    is_new_user=false instead of an error.
     """
 
     serializer_class = FirebaseLoginSerializer
@@ -454,20 +454,9 @@ class GoogleSignupView(GenericAPIView):
             return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            user = handle_google_signup(decoded)
+            user, is_new_user = handle_google_signup(decoded)
         except ValueError as exc:
-            error = str(exc)
-            if error == "already_registered":
-                return Response(
-                    {"detail": "This Google account is already registered. Please log in instead."},
-                    status=status.HTTP_409_CONFLICT,
-                )
-            if error == "email_exists":
-                return Response(
-                    {"detail": "An account with this email already exists. Please log in instead."},
-                    status=status.HTTP_409_CONFLICT,
-                )
-            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
@@ -476,9 +465,9 @@ class GoogleSignupView(GenericAPIView):
             {
                 **_verification_user_payload(user),
                 "token": token.key,
-                "is_new_user": True,
+                "is_new_user": is_new_user,
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED if is_new_user else status.HTTP_200_OK,
         )
 
 

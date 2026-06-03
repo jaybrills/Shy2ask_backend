@@ -210,13 +210,16 @@ def _handle_social_login(decoded_token: dict) -> tuple:
         return user, True
 
 
-def handle_google_signup(decoded_token: dict) -> User:
+def handle_google_signup(decoded_token: dict) -> tuple[User, bool]:
     """
-    Create a brand-new user from a Google Firebase token (signup-only).
+    Create or return an existing user from a Google Firebase token.
+
+    Returns:
+        (user, is_new_user) — is_new_user is False when the account already existed.
 
     Raises:
-        ValueError        — wrong provider, missing/unverified email, or account already exists
-        PermissionError   — account deactivated (email collision with deactivated account)
+        ValueError        — wrong provider, missing/unverified email
+        PermissionError   — account deactivated
     """
     sign_in_provider: str = decoded_token.get("firebase", {}).get("sign_in_provider", "")
     if sign_in_provider != "google.com":
@@ -232,13 +235,18 @@ def handle_google_signup(decoded_token: dict) -> User:
         raise ValueError("Google account email is not verified.")
 
     with transaction.atomic():
-        if (
+        social = (
             SocialAccount.objects
             .filter(provider=SocialAccount.PROVIDER_GOOGLE, provider_uid=uid)
+            .select_related("user")
             .select_for_update()
-            .exists()
-        ):
-            raise ValueError("already_registered")
+            .first()
+        )
+        if social is not None:
+            if not social.user.is_active:
+                raise PermissionError("This account has been deactivated.")
+            logger.info("Google signup: existing user_id=%s email=%s", social.user.id, email)
+            return social.user, False
 
         existing_user = (
             User.objects
@@ -249,7 +257,15 @@ def handle_google_signup(decoded_token: dict) -> User:
         if existing_user is not None:
             if not existing_user.is_active:
                 raise PermissionError("This account has been deactivated.")
-            raise ValueError("email_exists")
+            # Link Google to the existing account so future Google logins work.
+            SocialAccount.objects.create(
+                user=existing_user,
+                provider=SocialAccount.PROVIDER_GOOGLE,
+                provider_uid=uid,
+                email=email,
+            )
+            logger.info("Google signup: linked Google to existing user_id=%s email=%s", existing_user.id, email)
+            return existing_user, False
 
         user = _create_social_user(decoded_token)
         SocialAccount.objects.create(
@@ -260,7 +276,7 @@ def handle_google_signup(decoded_token: dict) -> User:
         )
 
     logger.info("Google signup: created new user_id=%s email=%s", user.id, email)
-    return user
+    return user, True
 
 
 def _create_social_user(decoded_token: dict) -> User:

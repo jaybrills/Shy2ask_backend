@@ -192,7 +192,7 @@ class N:
         key="new_request",
         title="New Request Received",
         body="Someone sent you a new request. Tap to view it.",
-        priority=Priority.HIGH,
+        priority=Priority.IGNORABLE,
     )
 
     PASSWORD_CHANGED = PushTemplate(

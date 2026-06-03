@@ -158,6 +158,7 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
             related_request=shy_request,
             use_ai_enhance=False,
             deliver_email=False,
+            deliver_push=False,
         )
         if admin_email:
             send_notification(
@@ -186,6 +187,7 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
             related_request=shy_request,
             use_ai_enhance=False,
             deliver_email=False,
+            deliver_push=False,
         )
         if admin_email:
             send_notification(

@@ -7,7 +7,7 @@ from account.emailing import build_email_context, send_templated_email
 logger = logging.getLogger(__name__)
 
 
-def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True, push_type: str | None = None):
+def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True, push_type: str | None = None, deliver_push: bool = True):
     """
     Central notification dispatcher — email + DB record + WebSocket + push.
 
@@ -82,7 +82,7 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
         )
 
     # ── Push notification ──────────────────────────────────────────────────────
-    if recipient_user and recipient_user.id:
+    if deliver_push and recipient_user and recipient_user.id:
         _dispatch_push(
             user_id=recipient_user.id,
             push_type=push_type,

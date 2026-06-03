@@ -132,12 +132,12 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 
     def _can_block_request(self, request, shy_request):
         user = request.user if request.user.is_authenticated else None
-        if not user:
-            return False
+        if user:
+            return True
         if getattr(user, "is_staff", False):
             return True
-        return user.id == shy_request.target_user_id
-
+        return False
+    
     def _conversation_response(self, request, shy_request, messages_qs, tracking_code: str = ""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         serialized_messages = MessageSerializer(
