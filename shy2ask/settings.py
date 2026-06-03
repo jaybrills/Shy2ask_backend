@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import sys
+import importlib
 import environ
 import os
 
@@ -72,19 +73,34 @@ ASGI_APPLICATION = 'shy2ask.asgi.application'
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 
-# Channel layers (for WebSocket groups). Prefer Redis; fallback to in-memory.
-try:
-    import redis
+def _build_channel_layers():
+    """Prefer Redis when both Redis and channels_redis are usable."""
+    redis_host = env("REDIS_HOST", default="127.0.0.1")
+    redis_port = env.int("REDIS_PORT", default=6379)
+    redis_db = env.int("REDIS_DB", default=0)
 
-    redis.Redis(host="127.0.0.1", port=6379, db=0, socket_connect_timeout=1).ping()
-    CHANNEL_LAYERS = {
+    try:
+        import redis
+
+        importlib.import_module("channels_redis.core")
+        redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            socket_connect_timeout=1,
+        ).ping()
+    except Exception:
+        return {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+    return {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [("127.0.0.1", 6379)]},
+            "CONFIG": {"hosts": [(redis_host, redis_port)]},
         },
     }
-except Exception:
-    CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+
+CHANNEL_LAYERS = _build_channel_layers()
 
 DATABASES = {
     "default": {
