@@ -52,7 +52,12 @@ class EmailFeaturesTest(TestCase):
     def test_verify_email_disposable(self):
         """Test verify email with disposable email fails (even if somehow registered)."""
         # Create user with valid email first
-        user = User.objects.create_user(email="valid@email.com", password="password", is_verified=False)
+        user = User.objects.create_user(
+            email="valid@email.com",
+            password="password",
+            is_email_verified=False,
+            is_phone_verified=False,
+        )
         # Update to disposable email bypassing save() and full_clean()
         User.objects.filter(id=user.id).update(email="test@yopmail.com")
         user.refresh_from_db()

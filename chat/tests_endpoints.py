@@ -89,21 +89,28 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertTrue(response.data[0]["is_received"])
 
     @patch("chat.emailing.send_templated_email")
-    def test_request_create_sends_html_emails_to_requester_and_target(self, mock_send_email):
-        response = self.client.post(
-            "/api/requests/",
-            {
-                "requester_name": "Another Requester",
-                "requester_email": self.owner.email,
-                "target_name": "Unregistered Target",
-                "target_email": "later-user@valid.com",
-                "description": "Another description",
-            },
-            format="json",
-            **self.auth_headers(self.owner_token),
-        )
+    @patch("chat.tasks.process_request_created_task.delay")
+    def test_request_create_sends_html_emails_to_requester_and_target(self, mock_delay, mock_send_email):
+        from chat.tasks import process_request_created_task
+
+        mock_delay.side_effect = lambda request_id: process_request_created_task.run(request_id)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/requests/",
+                {
+                    "requester_name": "Another Requester",
+                    "requester_email": self.owner.email,
+                    "target_name": "Unregistered Target",
+                    "target_email": "later-user@valid.com",
+                    "description": "Another description",
+                },
+                format="json",
+                **self.auth_headers(self.owner_token),
+            )
 
         self.assertEqual(response.status_code, 201)
+        mock_delay.assert_called_once_with(response.data["id"])
         self.assertEqual(mock_send_email.call_count, 2)
 
         recipients = [call.kwargs["recipient"] for call in mock_send_email.call_args_list]
@@ -234,14 +241,21 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(by_tracking.data["viewer"]["role"], Message.Actor.TARGET)
 
     @patch("chat.emailing.send_templated_email")
-    def test_reply_sends_html_emails_to_both_participants(self, mock_send_email):
-        reply = self.client.post(
-            "/api/requests/reply/",
-            {"tracking_code": self.request.tracking_code, "body": "Reply using tracking"},
-            format="json",
-        )
+    @patch("chat.tasks.process_request_reply_side_effects_task.delay")
+    def test_reply_sends_html_emails_to_both_participants(self, mock_delay, mock_send_email):
+        from chat.tasks import process_request_reply_side_effects_task
+
+        mock_delay.side_effect = lambda request_id, sender, body: process_request_reply_side_effects_task.run(request_id, sender, body)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            reply = self.client.post(
+                "/api/requests/reply/",
+                {"tracking_code": self.request.tracking_code, "body": "Reply using tracking"},
+                format="json",
+            )
 
         self.assertEqual(reply.status_code, 201)
+        mock_delay.assert_called_once_with(self.request.id, Message.Actor.TARGET, "Reply using tracking")
         self.assertEqual(mock_send_email.call_count, 2)
 
         recipients = [call.kwargs["recipient"] for call in mock_send_email.call_args_list]

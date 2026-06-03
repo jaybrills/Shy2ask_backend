@@ -485,23 +485,11 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
             )
 
     def ensure_description_message(self):
-        message, created = Message.objects.get_or_create(
+        message = Message.objects.filter(
             request=self,
             message_kind=Message.Kind.INITIAL_REQUEST,
-            defaults={
-                "sender": Message.Actor.REQUESTER,
-                "recipient": Message.Actor.TARGET,
-                "author": self.requester_identity,
-                "sender_user": self.requester_identity,
-                "recipient_user": self.target_user,
-                "sender_email": self.requester_email,
-                "recipient_email": self.target_email,
-                "sender_display_name": self.requester_display_name,
-                "recipient_display_name": self.target_display_name,
-                "body": self.description,
-            },
-        )
-        if not created:
+        ).first()
+        if message:
             message.sender = Message.Actor.REQUESTER
             message.recipient = Message.Actor.TARGET
             message.author = self.requester_identity
@@ -512,6 +500,28 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
             message.sender_display_name = self.requester_display_name
             message.recipient_display_name = self.target_display_name
             message.body = self.description
+            message.clean_body = self.description
+            message.is_blocked = False
+            message._skip_censor = True
+            message.save()
+        else:
+            message = Message(
+                request=self,
+                message_kind=Message.Kind.INITIAL_REQUEST,
+                sender=Message.Actor.REQUESTER,
+                recipient=Message.Actor.TARGET,
+                author=self.requester_identity,
+                sender_user=self.requester_identity,
+                recipient_user=self.target_user,
+                sender_email=self.requester_email,
+                recipient_email=self.target_email,
+                sender_display_name=self.requester_display_name,
+                recipient_display_name=self.target_display_name,
+                body=self.description,
+                clean_body=self.description,
+                is_blocked=False,
+            )
+            message._skip_censor = True
             message.save()
         return message
 
@@ -689,11 +699,15 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
             self.recipient_display_name = self.request.requester_display_name
         if self.recipient == self.Actor.TARGET and not self.recipient_display_name:
             self.recipient_display_name = self.request.target_display_name
-        clean_body, blocked = censor_text(self.body or "")
-        self.clean_body = clean_body
-        self.is_blocked = blocked
-        if blocked:
-            raise ValidationError("Message contains blocked content.")
+        if getattr(self, "_skip_censor", False):
+            self.clean_body = self.body or ""
+            self.is_blocked = False
+        else:
+            clean_body, blocked = censor_text(self.body or "")
+            self.clean_body = clean_body
+            self.is_blocked = blocked
+            if blocked:
+                raise ValidationError("Message contains blocked content.")
 
     def is_visible_to(self, actor_role: str | None) -> bool:
         if self.is_deleted:

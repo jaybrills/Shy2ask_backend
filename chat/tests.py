@@ -1,4 +1,5 @@
 from django.test import TestCase
+from unittest.mock import patch
 from rest_framework.test import APIClient
 from chat.models import Message, ShyRequest, Notification
 from account.models import User
@@ -7,14 +8,20 @@ class ShyRequestVerificationTest(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def test_create_request_and_notification(self):
+    @patch("chat.tasks.process_request_created_task.delay")
+    def test_create_request_and_notification(self, mock_delay):
+        from chat.tasks import process_request_created_task
+
+        mock_delay.side_effect = lambda request_id: process_request_created_task.run(request_id)
+
         data = {
             "requester_name": "Test User",
             "requester_email": "test@example.com",
             "description": "This is a test request",
             "service_channel": "email"
         }
-        response = self.client.post("/api/requests/", data, format="json")
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post("/api/requests/", data, format="json")
         self.assertEqual(response.status_code, 201)
 
         # Check ShyRequest
@@ -96,7 +103,12 @@ class ShyRequestVerificationTest(TestCase):
         self.assertEqual(response.data["description"], ["Description contains blocked content."])
 
     def test_messages_endpoint_as_owner_sender_is_requester(self):
-        owner = User.objects.create_user(email="owner@shy2ask.com", password="pass12345", is_verified=True)
+        owner = User.objects.create_user(
+            email="owner@shy2ask.com",
+            password="pass12345",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
         shy_request = ShyRequest.objects.create(
             user=owner,
             requester_name="Owner",
@@ -115,7 +127,12 @@ class ShyRequestVerificationTest(TestCase):
         self.assertTrue(Message.objects.filter(request=shy_request).exists())
 
     def test_target_email_can_access_and_send(self):
-        target = User.objects.create_user(email="target@shy2ask.com", password="pass12345", is_verified=True)
+        target = User.objects.create_user(
+            email="target@shy2ask.com",
+            password="pass12345",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
         shy_request = ShyRequest.objects.create(
             user=None,
             requester_name="Requester",

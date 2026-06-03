@@ -1,4 +1,7 @@
+import logging
+
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Exists, OuterRef, Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -11,7 +14,6 @@ from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
 
 from .censor_engine import censor_image, censor_text_full
-from .emailing import send_request_created_emails, send_ticket_created_emails, send_ticket_reply_emails
 from .models import FAQ, FAQVideo, ConversationMessage, Message, Notification, ShyRequest, Subscription, SupportTicket, SupportTicketReply
 from .message_service import (
     MessageAccessError,
@@ -38,6 +40,8 @@ from .serializers import (
     SupportTicketReplySerializer,
     SupportTicketSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def broadcast_chat_message(message):
@@ -73,32 +77,12 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         country_code = getattr(self.request, "detected_country", "") or ""
         instance = serializer.save(country_code=country_code)
 
-        # Send participant emails plus in-app notifications for the new request.
         try:
-            from .views import send_notification
+            from .tasks import process_request_created_task
 
-            send_request_created_emails(instance)
-            send_notification(
-                subject="Request created successfully",
-                body=f"Your request {instance.tracking_code} is live.",
-                recipient=instance.requester_email,
-                related_request=instance,
-                use_ai_enhance=False,
-                deliver_email=False,
-                push_type="request_submitted",
-            )
-            if instance.target_email:
-                send_notification(
-                    subject="You received a new request",
-                    body=f"A new request {instance.tracking_code} is waiting for your reply.",
-                    recipient=instance.target_email,
-                    related_request=instance,
-                    use_ai_enhance=False,
-                    deliver_email=False,
-                    push_type="new_request",
-                )
-        except Exception as e:
-            print(f"Error sending initial notification: {e}")
+            transaction.on_commit(lambda: process_request_created_task.delay(instance.id))
+        except Exception:
+            logger.exception("Failed to queue request-created task for request %s", instance.id)
 
     def _tracking_code(self, request) -> str:
         return (request.data.get("tracking_code") or request.query_params.get("tracking_code") or "").strip()
@@ -371,7 +355,9 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         ticket = serializer.save()
         try:
-            send_ticket_created_emails(ticket)
+            from .tasks import process_support_ticket_created_task
+
+            transaction.on_commit(lambda: process_support_ticket_created_task.delay(ticket.id))
         except Exception:
             pass
 
@@ -398,7 +384,9 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            send_ticket_reply_emails(ticket, reply)
+            from .tasks import process_support_ticket_reply_task
+
+            transaction.on_commit(lambda: process_support_ticket_reply_task.delay(ticket.id, reply.id))
         except Exception:
             pass
 

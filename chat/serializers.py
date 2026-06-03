@@ -4,7 +4,6 @@ from rest_framework import serializers
 
 from .message_service import resolve_display_name, resolve_recipient_name
 from .models import FAQ, FAQVideo, Attachment, Message, ShyRequest, SupportTicket, SupportTicketReply, user_display_name_for
-from .utils import censor_text
 
 
 User = get_user_model()
@@ -232,11 +231,6 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"requester_name": "Requester name is required."})
         if not attrs.get("requester_email") and not attrs.get("requester_user"):
             raise serializers.ValidationError({"requester_email": "Requester email or requester_user is required."})
-        if attrs.get("description"):
-            _, blocked = censor_text(attrs["description"])
-            if blocked:
-                raise serializers.ValidationError({"description": ["Description contains blocked content."]})
-
         return attrs
 
     def create(self, validated_data):

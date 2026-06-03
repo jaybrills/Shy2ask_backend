@@ -2,8 +2,6 @@ import logging
 
 from django.conf import settings
 
-from account.emailing import build_email_context, send_templated_email
-
 logger = logging.getLogger(__name__)
 
 
@@ -31,20 +29,12 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
     tracking_code = getattr(related_request, "tracking_code", "")
 
     if deliver_email:
-        send_templated_email(
-            subject=subject,
-            recipient=recipient,
-            text_template="emails/notification.txt",
-            html_template="emails/notification.html",
-            context=build_email_context(
-                preheader=subject,
-                headline=subject,
-                intro="You have a new update from Shy2Ask.com.",
-                body=body,
-                tracking_code=tracking_code,
-                footer_note="You are receiving this notification because activity occurred on a request connected to your account.",
-            ),
-        )
+        try:
+            from .tasks import send_notification_email_task
+
+            send_notification_email_task.delay(subject=subject, recipient=recipient, body=body, tracking_code=tracking_code)
+        except Exception:
+            logger.exception("Failed to queue notification email for recipient=%s", recipient)
 
     from .models import Notification
     from .websocket_utils import send_notification_websocket

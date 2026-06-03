@@ -1,13 +1,9 @@
-import threading
-import sys
-
 from django.conf import settings
+from django.db import transaction
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError
 
-from .emailing import send_request_reply_emails
 from .models import Message, ShyRequest
-from .utils import censor_text
 
 
 class MessageAccessError(PermissionDenied):
@@ -126,14 +122,22 @@ def create_message_for_request(
     msg.save()
 
     if run_async_business_logic:
-        _run_post_message_business_logic(shy_request=shy_request, sender=sender, body=body)
+        try:
+            from .tasks import process_request_reply_side_effects_task
+
+            transaction.on_commit(
+                lambda: process_request_reply_side_effects_task.delay(shy_request.id, sender, body)
+            )
+        except Exception:
+            pass
 
     return msg
 
 
-def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: str):
+def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: str):
     """Notifications + AI deal detection after each message."""
     from .views import send_notification
+    from .emailing import send_request_reply_emails
 
     admin_email = getattr(settings, "ADMIN_NOTIFY_EMAIL", "")
 
@@ -196,18 +200,9 @@ def _run_post_message_business_logic(shy_request: ShyRequest, sender: str, body:
                 recipient=admin_email,
                 related_request=shy_request,
             )
+    try:
+        from .tasks import run_deal_detection_and_notify_task
 
-    def _deal_detection_job():
-        try:
-            from .ai_services import run_deal_detection_and_notify
-
-            run_deal_detection_and_notify(shy_request.id)
-        except Exception:
-            pass
-
-    # Keep tests deterministic and avoid dangling DB sessions from background threads.
-    if "test" in sys.argv:
-        _deal_detection_job()
-        return
-
-    threading.Thread(target=_deal_detection_job, daemon=True).start()
+        run_deal_detection_and_notify_task.delay(shy_request.id)
+    except Exception:
+        pass
