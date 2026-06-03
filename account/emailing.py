@@ -2,16 +2,18 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
 
+from shy2ask.branding import get_logo_url
+
 
 def build_email_context(**extra):
-    site_url = getattr(settings, "SITE_URL", "https://backend.shy2ask.com").rstrip("/")
+    site_url = (extra.get("site_url") or getattr(settings, "SITE_URL", "https://backend.shy2ask.com")).rstrip("/")
     context = {
         "app_name": "Shy2Ask.com",
         "support_email": settings.EMAIL_SUPPORT_USER,
         "site_url": site_url,
         "brand_color": "#6B46C1",
         "brand_color_dark": "#312E81",
-        "logo_url": f"{site_url}/static/core/img/shy2ask-email-logo.svg",
+        "logo_url": get_logo_url(absolute=True, site_url=site_url),
     }
     context.update(extra)
     return context

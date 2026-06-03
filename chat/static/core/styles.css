@@ -35,17 +35,28 @@ body {
 }
 
 .logo-bubble {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.5rem 1rem;
     border: 3px solid var(--dark);
     border-radius: 18px;
-    background: var(--yellow);
+    background: #ffffff;
     box-shadow: 6px 6px 0 rgba(0,0,0,0.1);
+    text-decoration: none;
 }
 
 .logo-text {
     font-family: 'Fredoka One', cursive;
     letter-spacing: 1px;
     font-size: 1.3rem;
+}
+
+.site-logo {
+    display: block;
+    max-height: 52px;
+    width: auto;
+    max-width: min(240px, 42vw);
 }
 
 .main-nav a {
@@ -513,4 +524,3 @@ body {
         position: static;
     }
 }
-

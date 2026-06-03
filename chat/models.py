@@ -1235,3 +1235,38 @@ class CensorTrainingExample(models.Model):
 
     def __str__(self):
         return f"{'toxic' if self.is_toxic else 'safe'} ({self.source})"
+
+
+class SiteBranding(TimeStampedModel):
+    singleton_key = models.CharField(max_length=32, default="site-branding", unique=True, editable=False)
+    logo = models.ImageField(upload_to="branding/logos/")
+
+    class Meta:
+        verbose_name = "Site branding"
+        verbose_name_plural = "Site branding"
+        ordering = ["-updated_at", "-created_at"]
+
+    def __str__(self) -> str:
+        return "Site branding"
+
+    @classmethod
+    def get_solo(cls):
+        return cls.objects.order_by("-updated_at", "-created_at").first()
+
+    def save(self, *args, **kwargs):
+        old_logo_name = None
+        if self.pk:
+            old_logo_name = type(self).objects.filter(pk=self.pk).values_list("logo", flat=True).first()
+
+        super().save(*args, **kwargs)
+
+        if old_logo_name and old_logo_name != self.logo.name:
+            self.logo.storage.delete(old_logo_name)
+
+    def delete(self, *args, **kwargs):
+        logo_name = self.logo.name
+        storage = self.logo.storage
+        result = super().delete(*args, **kwargs)
+        if logo_name:
+            storage.delete(logo_name)
+        return result

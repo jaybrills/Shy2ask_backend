@@ -1,22 +1,23 @@
 from django.conf import settings
-from django.templatetags.static import static
 from django.urls import reverse
+
+from .branding import get_logo_url
 
 
 def logo_light(request):
-    return static("admin/brand-wordmark.svg")
+    return get_logo_url()
 
 
 def logo_dark(request):
-    return static("admin/brand-wordmark.svg")
+    return get_logo_url()
 
 
 def icon_light(request):
-    return static("admin/brand-mark.svg")
+    return get_logo_url()
 
 
 def icon_dark(request):
-    return static("admin/brand-mark.svg")
+    return get_logo_url()
 
 
 def environment_label(request):
@@ -69,6 +70,11 @@ def sidebar_navigation(request):
                     "title": "Dashboard",
                     "icon": "dashboard",
                     "link": reverse("admin:index"),
+                },
+                {
+                    "title": "Branding",
+                    "icon": "imagesmode",
+                    "link": reverse("admin:chat_sitebranding_changelist"),
                 },
             ],
         },

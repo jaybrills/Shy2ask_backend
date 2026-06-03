@@ -1,7 +1,13 @@
+import os
+import tempfile
 from django.test import TestCase
+from django.test import override_settings
 from decimal import Decimal
-from chat.models import ActiveShyRequest, ConversationMessage, Deal, Message, Notification, ShyRequest
+from django.core.files.uploadedfile import SimpleUploadedFile
+
+from account.emailing import build_email_context
 from account.models import User
+from chat.models import ActiveShyRequest, ConversationMessage, Deal, Message, Notification, ShyRequest, SiteBranding
 
 class ChatModelTest(TestCase):
     def setUp(self):
@@ -94,3 +100,27 @@ class ChatModelTest(TestCase):
 
         self.assertFalse(Message.objects.visible_to(Message.Actor.REQUESTER).filter(id=message.id).exists())
         self.assertTrue(Message.objects.visible_to(Message.Actor.TARGET).filter(id=message.id).exists())
+
+    def test_default_email_context_uses_static_logo(self):
+        context = build_email_context(site_url="https://backend.shy2ask.com")
+
+        self.assertEqual(context["logo_url"], "https://backend.shy2ask.com/static/core/img/shy2ask-logo.png")
+
+    def test_updating_site_branding_deletes_old_media_logo(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root, MEDIA_URL="/media/", SITE_URL="https://backend.shy2ask.com"):
+                branding = SiteBranding.objects.create(
+                    logo=SimpleUploadedFile("logo-one.png", b"first-logo", content_type="image/png"),
+                )
+                old_logo_path = branding.logo.path
+
+                branding.logo = SimpleUploadedFile("logo-two.png", b"second-logo", content_type="image/png")
+                branding.save()
+
+                branding.refresh_from_db()
+                self.assertFalse(branding.logo.name.endswith("logo-one.png"))
+                self.assertFalse(os.path.exists(old_logo_path))
+                self.assertTrue(os.path.exists(branding.logo.path))
+
+                context = build_email_context()
+                self.assertEqual(context["logo_url"], f"https://backend.shy2ask.com{branding.logo.url}")

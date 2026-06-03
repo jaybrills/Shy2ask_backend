@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.timesince import timesince
 from unfold.admin import ModelAdmin, TabularInline
@@ -16,6 +18,7 @@ from .models import (
     Message,
     Notification,
     OffensiveTerm,
+    SiteBranding,
     ShyRequest,
     Subscription,
     SupportTicket,
@@ -71,6 +74,39 @@ class MessageInline(TabularInline):
     def body_preview(self, obj):
         text = obj.clean_body or obj.body or ""
         return text[:80] + ("..." if len(text) > 80 else "")
+
+
+@admin.register(SiteBranding)
+class SiteBrandingAdmin(ModelAdmin):
+    list_fullwidth = True
+    compressed_fields = True
+    warn_unsaved_form = True
+    list_display = ("logo_preview", "updated_at")
+    readonly_fields = ("logo_preview", "created_at", "updated_at")
+    fields = ("logo", "logo_preview", "created_at", "updated_at")
+
+    @admin.display(description="Current logo")
+    def logo_preview(self, obj):
+        if not obj or not obj.logo:
+            return "No logo uploaded"
+        return format_html(
+            '<img src="{}" alt="Site logo" style="max-height:72px;width:auto;border-radius:12px;background:#fff;padding:8px;">',
+            obj.logo.url,
+        )
+
+    def has_add_permission(self, request):
+        if SiteBranding.objects.exists():
+            return False
+        return super().has_add_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        branding = SiteBranding.get_solo()
+        if branding:
+            return HttpResponseRedirect(reverse("admin:chat_sitebranding_change", args=[branding.pk]))
+        return super().changelist_view(request, extra_context=extra_context)
 
 
 @admin.register(ShyRequest)
