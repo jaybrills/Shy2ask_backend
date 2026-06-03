@@ -3,11 +3,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.template.loader import render_to_string
 from django.test import TestCase, override_settings
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from account.models import User
+from account.emailing import build_email_context
 from chat.models import Message, Notification, ShyRequest, Subscription
 
 
@@ -18,12 +20,14 @@ class ChatEndpointCoverageTest(TestCase):
             email="requester@valid.com",
             password="password123",
             alias_name="RequesterAlias",
-            is_verified=True,
+            is_email_verified=True,
+            is_phone_verified=True,
         )
         self.target = User.objects.create_user(
             email="target@valid.com",
             password="password123",
-            is_verified=True,
+            is_email_verified=True,
+            is_phone_verified=True,
         )
         self.owner_token, _ = Token.objects.get_or_create(user=self.owner)
         self.target_token, _ = Token.objects.get_or_create(user=self.target)
@@ -242,9 +246,41 @@ class ChatEndpointCoverageTest(TestCase):
 
         recipients = [call.kwargs["recipient"] for call in mock_send_email.call_args_list]
         self.assertEqual(recipients, [self.owner.email, self.target.email])
-        self.assertEqual(mock_send_email.call_args_list[0].kwargs["context"]["message_body"], "Reply using tracking")
+        self.assertTrue(mock_send_email.call_args_list[0].kwargs["context"]["message_hidden"])
+        self.assertTrue(mock_send_email.call_args_list[0].kwargs["context"]["has_new_message"])
+        self.assertEqual(mock_send_email.call_args_list[0].kwargs["context"]["reply_url"], "")
         self.assertEqual(mock_send_email.call_args_list[1].kwargs["context"]["message_label"], "Your message")
         self.assertTrue(all(call.kwargs["html_template"] == "emails/request_update.html" for call in mock_send_email.call_args_list))
+
+    @override_settings(
+        REQUEST_REPLY_URL_TEMPLATE="shy2ask://reply/{tracking_code}",
+        IOS_APP_URL="https://apps.apple.com/app/shy2ask",
+        ANDROID_APP_URL="https://play.google.com/store/apps/details?id=com.shy2ask",
+    )
+    def test_request_email_template_hides_private_content_and_renders_app_ctas(self):
+        html = render_to_string(
+            "emails/request_update.html",
+            build_email_context(
+                recipient_name="Requester",
+                summary_title="Latest update",
+                summary_body="A new update is ready.",
+                tracking_code=self.request.tracking_code,
+                recipient_role_label="Requester",
+                service_channel=self.request.get_service_channel_display(),
+                status_label=self.request.get_status_display(),
+                has_new_message=True,
+                message_hidden=True,
+                reply_url=f"shy2ask://reply/{self.request.tracking_code}",
+                ios_app_url="https://apps.apple.com/app/shy2ask",
+                android_app_url="https://play.google.com/store/apps/details?id=com.shy2ask",
+            ),
+        )
+
+        self.assertNotIn("Need help with this request", html)
+        self.assertNotIn("Reply using tracking", html)
+        self.assertIn("Reply in App", html)
+        self.assertIn("Download for iOS", html)
+        self.assertIn("Download for Android", html)
 
     def test_unreplied_requests_endpoint_only_returns_requests_without_target_reply(self):
         unreplied_request = self.request
@@ -482,7 +518,12 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertFalse(Subscription.objects.get(id=subscription_id).is_active)
 
     def test_subscription_requires_owned_request(self):
-        outsider = User.objects.create_user(email="outsider@valid.com", password="password123", is_verified=True)
+        outsider = User.objects.create_user(
+            email="outsider@valid.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
         outsider_token, _ = Token.objects.get_or_create(user=outsider)
 
         response = self.client.post(

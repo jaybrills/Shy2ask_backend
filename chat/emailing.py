@@ -1,6 +1,13 @@
 from django.conf import settings
 
-from account.emailing import build_email_context, get_request_connection, get_support_connection, send_templated_email
+from account.emailing import (
+    build_email_context,
+    build_request_reply_url,
+    get_mobile_store_links,
+    get_request_connection,
+    get_support_connection,
+    send_templated_email,
+)
 
 from .models import Message, ShyRequest, SupportTicket, SupportTicketReply
 
@@ -22,6 +29,9 @@ def _send_request_email(
     if not recipient:
         return
 
+    reply_url = build_request_reply_url(tracking_code=shy_request.tracking_code)
+    ios_app_url, android_app_url = get_mobile_store_links()
+
     send_templated_email(
         subject=subject,
         recipient=recipient,
@@ -37,13 +47,16 @@ def _send_request_email(
             recipient_name=recipient_name or recipient_role_label,
             recipient_role_label=recipient_role_label,
             tracking_code=shy_request.tracking_code,
-            request_description=shy_request.description,
             service_channel=shy_request.get_service_channel_display(),
             status_label=shy_request.get_status_display(),
             summary_title=summary_title,
             summary_body=summary_body,
-            message_body=(message_body or "").strip(),
+            has_new_message=bool((message_body or "").strip()),
             message_label=message_label,
+            message_hidden=True,
+            reply_url=reply_url,
+            ios_app_url=ios_app_url,
+            android_app_url=android_app_url,
         ),
     )
 

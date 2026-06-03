@@ -19,6 +19,20 @@ def build_email_context(**extra):
     return context
 
 
+def build_request_reply_url(*, tracking_code: str, site_url: str | None = None) -> str:
+    template = (getattr(settings, "REQUEST_REPLY_URL_TEMPLATE", "") or "").strip()
+    if not template:
+        return ""
+    resolved_site_url = (site_url or getattr(settings, "SITE_URL", "https://backend.shy2ask.com")).rstrip("/")
+    return template.format(tracking_code=tracking_code, site_url=resolved_site_url)
+
+
+def get_mobile_store_links() -> tuple[str, str]:
+    ios_url = (getattr(settings, "IOS_APP_URL", "") or "").strip()
+    android_url = (getattr(settings, "ANDROID_APP_URL", "") or "").strip()
+    return ios_url, android_url
+
+
 _SMTP_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 
 

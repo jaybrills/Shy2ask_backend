@@ -13,14 +13,19 @@ Channel: {{ service_channel }}
 Status: {{ status_label }}
 Privacy: Personal identity details are intentionally hidden.
 
-{% if message_body %}{{ message_label }}:
-{{ message_body }}
+{% if has_new_message %}A new message is available, but its contents stay hidden in email for privacy.
+{% else %}Request details stay hidden in email for privacy.
+{% endif %}
 
-{% endif %}Original request:
-{{ request_description }}
+Open the Shy2Ask app to view the private conversation and continue from the reply screen.
+
+{% if reply_url %}Reply in app: {{ reply_url }}
+{% endif %}{% if ios_app_url %}Download for iOS: {{ ios_app_url }}
+{% endif %}{% if android_app_url %}Download for Android: {{ android_app_url }}
+{% endif %}
 
 Shy2Ask keeps personal identity private in email communication.
-Follow-up actions will open directly in the app once the in-app flow is connected.
+Message contents stay hidden until opened inside the app.
 
 {{ footer_note }}
 Support: {{ support_email }}

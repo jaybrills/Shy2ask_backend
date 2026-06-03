@@ -24,22 +24,50 @@
   </tr>
 </table>
 
-{% if message_body %}
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 20px;">
   <tr>
     <td style="padding:20px;border-radius:22px;background:#faf5ff;border:1px solid #e9d5ff;">
-      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#7C3AED;">{{ message_label }}</div>
-      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#4c1d95;white-space:pre-line;">{{ message_body }}</div>
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#7C3AED;">Private message</div>
+      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#4c1d95;">
+        {% if has_new_message %}
+          A new message is available, but its contents stay hidden in email for privacy.
+        {% else %}
+          Request details stay hidden in email for privacy.
+        {% endif %}
+      </div>
     </td>
   </tr>
 </table>
-{% endif %}
 
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 26px;">
   <tr>
     <td style="padding:20px;border-radius:22px;background:#f8fafc;border:1px solid #e5e7eb;">
-      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#374151;">Original request</div>
-      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#1f2937;white-space:pre-line;">{{ request_description }}</div>
+      <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#374151;">Next step</div>
+      <div style="margin-top:10px;font-size:15px;line-height:1.8;color:#1f2937;">
+        Open the Shy2Ask app to view the private conversation and continue from the reply screen.
+      </div>
+    </td>
+  </tr>
+</table>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 24px;">
+  <tr>
+    <td>
+      {% if reply_url %}
+      <a href="{{ reply_url }}" style="display:inline-block;padding:14px 22px;margin:0 12px 12px 0;border-radius:999px;background:#6B46C1;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">
+        Reply in App
+      </a>
+      {% endif %}
+      {% if ios_app_url %}
+      <a href="{{ ios_app_url }}" style="display:inline-block;padding:14px 22px;margin:0 12px 12px 0;border-radius:999px;background:#111827;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">
+        Download for iOS
+      </a>
+      {% endif %}
+      {% if android_app_url %}
+      <a href="{{ android_app_url }}" style="display:inline-block;padding:14px 22px;margin:0 12px 12px 0;border-radius:999px;background:#059669;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">
+        Download for Android
+      </a>
+      {% endif %}
     </td>
   </tr>
 </table>
@@ -47,7 +75,7 @@
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 24px;">
   <tr>
     <td style="padding:18px 20px;border-radius:20px;background:#eef2ff;border:1px solid #c7d2fe;font-size:14px;line-height:1.75;color:#3730a3;">
-      Shy2Ask keeps personal identity private in email communication. Follow-up actions will open directly in the app once the in-app flow is connected.
+      Shy2Ask keeps personal identity private in email communication. Message contents stay hidden until opened inside the app.
     </td>
   </tr>
 </table>

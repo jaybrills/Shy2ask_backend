@@ -171,6 +171,11 @@ UNFOLD = {
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+SITE_URL = env("SITE_URL", default="https://backend.shy2ask.com")
+REQUEST_REPLY_URL_TEMPLATE = env("REQUEST_REPLY_URL_TEMPLATE", default="")
+IOS_APP_URL = env("IOS_APP_URL", default="")
+ANDROID_APP_URL = env("ANDROID_APP_URL", default="")
+
 # Security (from env)
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000,http://127.0.0.1:8000,http://10.0.2.2:8000",
