@@ -8,7 +8,7 @@ from rest_framework.authtoken.models import Token
 
 from .message_service import create_message_for_request
 from .models import Message, ShyRequest, Notification
-from .websocket_utils import serialize_message_for_websocket
+from .websocket_utils import build_received_request_inbox_snapshot, serialize_message_for_websocket
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -399,6 +399,92 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             pass
         except Exception as e:
             print(f"Error marking notification read: {e}")
+
+    def get_query_params(self):
+        query_string = self.scope.get("query_string", b"").decode()
+        return urllib.parse.parse_qs(query_string)
+
+    async def get_authenticated_user(self):
+        user = self.scope["user"]
+        if not isinstance(user, AnonymousUser):
+            return user
+
+        params = self.get_query_params()
+        token_key = (params.get("token") or params.get("access_token") or [None])[0]
+        if not token_key:
+            headers = dict(self.scope.get("headers") or [])
+            auth_header = headers.get(b"authorization", b"").decode()
+            if auth_header.lower().startswith("bearer "):
+                token_key = auth_header.split(" ", 1)[1].strip()
+        if not token_key:
+            return user
+        return await self.get_user_by_token(token_key) or user
+
+    @database_sync_to_async
+    def get_user_by_token(self, token_key):
+        token = Token.objects.select_related("user").filter(key=token_key).first()
+        return token.user if token else None
+
+
+class RequestInboxConsumer(AsyncWebsocketConsumer):
+    """WebSocket consumer for a user's received-request inbox snapshot."""
+
+    async def connect(self):
+        self.user = await self.get_authenticated_user()
+        self.user_id = self.user.id if not isinstance(self.user, AnonymousUser) else None
+        if isinstance(self.user, AnonymousUser):
+            await self.close()
+            return
+
+        self.query_params = self.get_query_params()
+        self.limit = self._parse_limit((self.query_params.get("limit") or [20])[0])
+        self.room_group_name = f"request_inbox_{self.user_id}"
+
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        await self.accept()
+        await self.send_snapshot(event_type="request_inbox.snapshot")
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+
+        message_type = data.get("type")
+        if message_type == "ping":
+            await self.send(text_data=json.dumps({"type": "pong"}))
+            return
+        if message_type == "request_inbox.refresh":
+            await self.send_snapshot(event_type="request_inbox.snapshot")
+
+    async def request_inbox_refresh(self, event):
+        await self.send_snapshot(event_type=event.get("event_type", "request_inbox.updated"))
+
+    async def send_snapshot(self, *, event_type: str):
+        snapshot = await self.get_snapshot()
+        await self.send(text_data=json.dumps({
+            "type": event_type,
+            **snapshot,
+        }))
+
+    @database_sync_to_async
+    def get_snapshot(self):
+        return build_received_request_inbox_snapshot(self.user, limit=self.limit)
+
+    def _parse_limit(self, value):
+        try:
+            return max(1, min(int(value), 100))
+        except (TypeError, ValueError):
+            return 20
 
     def get_query_params(self):
         query_string = self.scope.get("query_string", b"").decode()

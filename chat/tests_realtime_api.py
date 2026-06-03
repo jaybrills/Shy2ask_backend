@@ -2,6 +2,8 @@ import json
 from django.test import TestCase, Client
 from account.models import User
 from chat.models import Message, ShyRequest
+from chat.message_service import create_message_for_request
+from chat.websocket_utils import build_received_request_inbox_snapshot
 from rest_framework.authtoken.models import Token
 
 class RealtimeAPITest(TestCase):
@@ -98,7 +100,74 @@ class RealtimeAPITest(TestCase):
         self.assertIn("/ws/chat/{request_id}/", payload["chat"]["url"])
         self.assertIn("format=json", payload["chat"]["json_url"])
         self.assertIn("/ws/notifications/", payload["notifications"]["url"])
+        self.assertIn("/ws/requests/inbox/", payload["request_inbox"]["url"])
 
         schema_response = self.client.get("/openapi.json")
         self.assertEqual(schema_response.status_code, 200)
         self.assertIn("/api/realtime/docs/", schema_response.json()["paths"])
+
+    def test_received_request_inbox_snapshot_returns_recent_requests_and_stats(self):
+        requester = User.objects.create_user(
+            email="requester@shy2ask.com",
+            password="password123",
+            is_verified=True,
+        )
+
+        pending_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester One",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Realtime Target",
+            target_email=self.user.email,
+            description="Pending request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        create_message_for_request(
+            pending_request,
+            "Most recent requester message",
+            user=requester,
+            run_async_business_logic=False,
+        )
+
+        cancelled_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester Two",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Realtime Target",
+            target_email=self.user.email,
+            description="Cancelled request",
+            status=ShyRequest.Status.REJECTED,
+        )
+
+        blocked_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester Three",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Realtime Target",
+            target_email=self.user.email,
+            description="Blocked request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        blocked_request.block(actor=self.user, note="Unsafe")
+
+        snapshot = build_received_request_inbox_snapshot(self.user)
+
+        self.assertEqual(snapshot["stats"]["received_requests_count"], 3)
+        self.assertEqual(snapshot["stats"]["pending_requests_count"], 1)
+        self.assertEqual(snapshot["stats"]["cancelled_requests_count"], 2)
+        self.assertEqual(snapshot["stats"]["rejected_requests_count"], 2)
+        self.assertEqual(snapshot["stats"]["blocked_requests_count"], 1)
+        self.assertEqual(snapshot["recent_requests"][0]["id"], pending_request.id)
+        self.assertEqual(
+            snapshot["recent_requests"][0]["latest_message"]["clean_body"],
+            "Most recent requester message",
+        )
+        request_ids = [item["id"] for item in snapshot["recent_requests"]]
+        self.assertIn(cancelled_request.id, request_ids)
+        self.assertIn(blocked_request.id, request_ids)

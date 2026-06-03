@@ -37,6 +37,7 @@ def process_request_created_task(request_id: int) -> None:
     from .emailing import send_request_created_emails
     from .models import ShyRequest
     from .views import send_notification
+    from .websocket_utils import get_request_inbox_user_ids, send_received_request_inbox_websocket
 
     try:
         shy_request = ShyRequest.objects.with_related().get(pk=request_id)
@@ -75,6 +76,12 @@ def process_request_created_task(request_id: int) -> None:
             )
         except Exception:
             logger.exception("Failed target notification for request %s", request_id)
+
+    try:
+        for user_id in get_request_inbox_user_ids(shy_request):
+            send_received_request_inbox_websocket(user_id)
+    except Exception:
+        logger.exception("Failed request inbox websocket refresh for request %s", request_id)
 
 
 @shared_task

@@ -121,6 +121,14 @@ def create_message_for_request(
     msg.full_clean()
     msg.save()
 
+    try:
+        from .websocket_utils import get_request_inbox_user_ids, send_received_request_inbox_websocket
+
+        for user_id in get_request_inbox_user_ids(shy_request):
+            send_received_request_inbox_websocket(user_id)
+    except Exception:
+        pass
+
     if run_async_business_logic:
         try:
             from .tasks import process_request_reply_side_effects_task

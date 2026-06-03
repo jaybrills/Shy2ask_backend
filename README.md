@@ -60,7 +60,7 @@ Login with **email only**. **Email verification** and **forgot/reset password** 
 ## Other routes
 
 - **HTTP:** `/admin/`, `/api/` (DRF chat requests/messages)
-- **WebSocket:** `/ws/chat/<request_id>/`, `/ws/notifications/`
+- **WebSocket:** `/ws/chat/<request_id>/`, `/ws/notifications/`, `/ws/requests/inbox/`
 - **OpenAPI schema:** `/openapi.json`
 
 Optional: Redis for channel layer; without it, in-memory layer is used (single process).

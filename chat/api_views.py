@@ -20,7 +20,12 @@ from .message_service import (
     can_access_conversation,
     create_message_for_request,
 )
-from .websocket_utils import send_chat_message_websocket, serialize_message_for_websocket
+from .websocket_utils import (
+    get_request_inbox_user_ids,
+    send_chat_message_websocket,
+    send_received_request_inbox_websocket,
+    serialize_message_for_websocket,
+)
 from account.api_views import BearerTokenAuthentication
 from account.permissions import IsVerified
 from .serializers import (
@@ -196,7 +201,10 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         if not self._can_manage_request(request, instance):
             return Response({"detail": "You are not allowed to delete this request."}, status=status.HTTP_403_FORBIDDEN)
+        target_user_ids = get_request_inbox_user_ids(instance)
         instance.delete()
+        for target_user_id in target_user_ids:
+            send_received_request_inbox_websocket(target_user_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get"], permission_classes=[permissions.AllowAny])
@@ -215,7 +223,12 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         payload.is_valid(raise_exception=True)
 
         queryset = ShyRequest.objects.for_participant(user=request.user).filter(id__in=payload.validated_data["ids"])
+        target_user_ids = set()
+        for shy_request in queryset.select_related("target_user"):
+            target_user_ids.update(get_request_inbox_user_ids(shy_request))
         deleted_count = queryset.soft_delete()
+        for target_user_id in target_user_ids:
+            send_received_request_inbox_websocket(target_user_id)
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["delete"], permission_classes=[IsVerified], url_path=r"messages/(?P<message_id>[^/.]+)")
@@ -259,6 +272,8 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             actor=request.user,
             note=payload.validated_data.get("note", ""),
         )
+        for target_user_id in get_request_inbox_user_ids(shy_request):
+            send_received_request_inbox_websocket(target_user_id)
         return Response(
             {
                 "request_id": shy_request.id,
@@ -600,6 +615,7 @@ class RealtimeDocumentationView(APIView):
             fields={
                 "chat": serializers.DictField(),
                 "notifications": serializers.DictField(),
+                "request_inbox": serializers.DictField(),
                 "notes": serializers.ListField(child=serializers.CharField()),
             },
         ),
@@ -649,10 +665,50 @@ class RealtimeDocumentationView(APIView):
                     "events": ["unread_notifications", "notification"],
                     "send_mark_read": {"type": "mark_read", "notification_id": 1},
                 },
+                "request_inbox": {
+                    "url": f"{ws_base}/ws/requests/inbox/",
+                    "token_url": f"{ws_base}/ws/requests/inbox/?token=<token>",
+                    "auth": "Logged-in target user only. Use session cookies, Authorization: Bearer <token>, or ?token=<token>.",
+                    "optional_query_params": {
+                        "limit": "Number of recent received requests to return (default 20, max 100).",
+                    },
+                    "events": ["request_inbox.snapshot", "request_inbox.updated"],
+                    "snapshot_event": {
+                        "type": "request_inbox.snapshot",
+                        "stats": {
+                            "received_requests_count": 12,
+                            "pending_requests_count": 3,
+                            "cancelled_requests_count": 2,
+                            "rejected_requests_count": 2,
+                            "blocked_requests_count": 1,
+                        },
+                        "recent_requests": [
+                            {
+                                "id": 123,
+                                "tracking_code": "ABC123",
+                                "status": "submitted",
+                                "is_blocked": False,
+                                "requester_name": "Requester",
+                                "requester_email": "requester@example.com",
+                                "description": "Need help with my request",
+                                "latest_message": {
+                                    "id": 456,
+                                    "sender": "requester",
+                                    "recipient": "target",
+                                    "body": "Hello",
+                                    "clean_body": "Hello",
+                                    "created_at": "2026-04-22T10:00:00+00:00",
+                                },
+                            }
+                        ],
+                    },
+                    "send_refresh": {"type": "request_inbox.refresh"},
+                },
                 "notes": [
                     "Use ws:// for HTTP and wss:// for HTTPS.",
                     "REST-created messages are broadcast to connected chat clients.",
                     "The default chat socket response is HTML for the existing HTMX page; pass ?format=json for API/mobile clients.",
+                    "The request inbox socket is intended for dashboards showing requests the current user has received as the target.",
                 ],
             }
         )
