@@ -668,14 +668,17 @@ class RealtimeDocumentationView(APIView):
                 "request_inbox": {
                     "url": f"{ws_base}/ws/requests/inbox/",
                     "token_url": f"{ws_base}/ws/requests/inbox/?token=<token>",
-                    "auth": "Logged-in target user only. Use session cookies, Authorization: Bearer <token>, or ?token=<token>.",
+                    "auth": "Logged-in participant only. Use session cookies, Authorization: Bearer <token>, or ?token=<token>.",
                     "optional_query_params": {
-                        "limit": "Number of recent received requests to return (default 20, max 100).",
+                        "limit": "Number of recent connected requests to return (default 20, max 100).",
                     },
                     "events": ["request_inbox.snapshot", "request_inbox.updated"],
                     "snapshot_event": {
                         "type": "request_inbox.snapshot",
+                        "viewer": {"id": 9, "role": "participant", "label": "Participant"},
                         "stats": {
+                            "total_requests_count": 12,
+                            "sent_requests_count": 5,
                             "received_requests_count": 12,
                             "pending_requests_count": 3,
                             "cancelled_requests_count": 2,
@@ -688,8 +691,15 @@ class RealtimeDocumentationView(APIView):
                                 "tracking_code": "ABC123",
                                 "status": "submitted",
                                 "is_blocked": False,
+                                "direction": "received",
+                                "viewer_role": "target",
                                 "requester_name": "Requester",
                                 "requester_email": "requester@example.com",
+                                "target_name": "Target",
+                                "target_email": "target@example.com",
+                                "counterparty_role": "requester",
+                                "counterparty_label": "Requester",
+                                "counterparty_name": "Requester",
                                 "description": "Need help with my request",
                                 "latest_message": {
                                     "id": 456,
@@ -697,6 +707,8 @@ class RealtimeDocumentationView(APIView):
                                     "recipient": "target",
                                     "body": "Hello",
                                     "clean_body": "Hello",
+                                    "direction": "inbound",
+                                    "is_mine": False,
                                     "created_at": "2026-04-22T10:00:00+00:00",
                                 },
                             }
@@ -708,7 +720,7 @@ class RealtimeDocumentationView(APIView):
                     "Use ws:// for HTTP and wss:// for HTTPS.",
                     "REST-created messages are broadcast to connected chat clients.",
                     "The default chat socket response is HTML for the existing HTMX page; pass ?format=json for API/mobile clients.",
-                    "The request inbox socket is intended for dashboards showing requests the current user has received as the target.",
+                    "The request inbox socket is role-aware and can be used for both requester and target dashboards.",
                 ],
             }
         )

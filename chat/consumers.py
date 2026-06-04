@@ -8,7 +8,11 @@ from rest_framework.authtoken.models import Token
 
 from .message_service import create_message_for_request
 from .models import Message, ShyRequest, Notification
-from .websocket_utils import build_received_request_inbox_snapshot, serialize_message_for_websocket
+from .websocket_utils import (
+    build_request_inbox_snapshot,
+    decorate_message_for_viewer,
+    serialize_message_for_websocket,
+)
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -158,6 +162,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "role": Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER,
                     "label": "Target" if self.is_target else "Requester",
                 },
+                "participants": {
+                    "requester": request_data.get("requester"),
+                    "target": request_data.get("target"),
+                },
                 "messages": [self.with_viewer_fields(message) for message in messages],
             })
             return
@@ -233,6 +241,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "service_channel": request.service_channel,
             "description": request.description,
             "created_at": request.created_at.isoformat(),
+            "requester": {
+                "role": Message.Actor.REQUESTER,
+                "label": "Requester",
+                "name": request.requester_display_name,
+                "email": request.requester_email,
+                "is_me": not self.is_target,
+            },
+            "target": {
+                "role": Message.Actor.TARGET,
+                "label": "Target",
+                "name": request.target_display_name,
+                "email": request.target_email,
+                "is_me": self.is_target,
+            },
         }
 
     def get_query_params(self):
@@ -262,14 +284,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     def with_viewer_fields(self, message):
         viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
-        message = dict(message)
-        message["direction"] = "outbound" if message.get("sender") == viewer_role else "inbound"
-        message["is_mine"] = message.get("sender") == viewer_role
-        message["sender_role"] = message.get("sender")
-        message["recipient_role"] = message.get("recipient")
-        message["sender_label"] = "Requester" if message.get("sender") == Message.Actor.REQUESTER else "Target"
-        message["recipient_label"] = "Requester" if message.get("recipient") == Message.Actor.REQUESTER else "Target"
-        return message
+        return decorate_message_for_viewer(message, viewer_role)
 
     async def send_json_event(self, payload):
         if self.response_format == "json":
@@ -478,7 +493,7 @@ class RequestInboxConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_snapshot(self):
-        return build_received_request_inbox_snapshot(self.user, limit=self.limit)
+        return build_request_inbox_snapshot(self.user, limit=self.limit)
 
     def _parse_limit(self, value):
         try:

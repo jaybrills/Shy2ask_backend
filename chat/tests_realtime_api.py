@@ -1,4 +1,6 @@
 import json
+from unittest.mock import patch
+
 from django.test import TestCase, Client
 from account.models import User
 from chat.models import Message, ShyRequest
@@ -12,7 +14,8 @@ class RealtimeAPITest(TestCase):
         self.user = User.objects.create_user(
             email="realtime@shy2ask.com",
             password="password123",
-            is_verified=True
+            is_email_verified=True,
+            is_phone_verified=True,
         )
         self.token, _ = Token.objects.get_or_create(user=self.user)
         self.auth_headers = {"HTTP_AUTHORIZATION": f"Bearer {self.token.key}"}
@@ -50,7 +53,7 @@ class RealtimeAPITest(TestCase):
         self.assertEqual(response.status_code, 403)
         response_ok = self.client.get(f"/api/requests/{req.id}/conversation/?tracking_code={req.tracking_code}")
         self.assertEqual(response_ok.status_code, 200)
-        self.assertIn("description", response_ok.json())
+        self.assertIn("description", response_ok.json()["request"])
         self.assertIn("messages", response_ok.json())
 
     def test_reply_by_tracking_drf(self):
@@ -110,7 +113,8 @@ class RealtimeAPITest(TestCase):
         requester = User.objects.create_user(
             email="requester@shy2ask.com",
             password="password123",
-            is_verified=True,
+            is_email_verified=True,
+            is_phone_verified=True,
         )
 
         pending_request = ShyRequest.objects.create(
@@ -151,7 +155,7 @@ class RealtimeAPITest(TestCase):
             target_user=self.user,
             target_name="Realtime Target",
             target_email=self.user.email,
-            description="Blocked request",
+            description="Flagged follow-up request",
             status=ShyRequest.Status.SUBMITTED,
         )
         blocked_request.block(actor=self.user, note="Unsafe")
@@ -171,3 +175,80 @@ class RealtimeAPITest(TestCase):
         request_ids = [item["id"] for item in snapshot["recent_requests"]]
         self.assertIn(cancelled_request.id, request_ids)
         self.assertIn(blocked_request.id, request_ids)
+
+    def test_requester_inbox_snapshot_returns_sent_stats_and_outbound_latest_message(self):
+        requester = User.objects.create_user(
+            email="requester2@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+
+        sent_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester Sent",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Realtime Target",
+            target_email=self.user.email,
+            description="Requester-owned request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        create_message_for_request(
+            sent_request,
+            "Requester follow-up",
+            user=requester,
+            run_async_business_logic=False,
+        )
+
+        snapshot = build_received_request_inbox_snapshot(requester)
+
+        self.assertEqual(snapshot["viewer"]["role"], "participant")
+        self.assertEqual(snapshot["stats"]["total_requests_count"], 1)
+        self.assertEqual(snapshot["stats"]["sent_requests_count"], 1)
+        self.assertEqual(snapshot["stats"]["received_requests_count"], 0)
+        self.assertEqual(snapshot["recent_requests"][0]["direction"], "sent")
+        self.assertTrue(snapshot["recent_requests"][0]["is_sent"])
+        self.assertFalse(snapshot["recent_requests"][0]["is_received"])
+        self.assertEqual(snapshot["recent_requests"][0]["viewer_role"], Message.Actor.REQUESTER)
+        self.assertEqual(snapshot["recent_requests"][0]["counterparty_role"], Message.Actor.TARGET)
+        self.assertEqual(
+            snapshot["recent_requests"][0]["latest_message"]["direction"],
+            "outbound",
+        )
+        self.assertTrue(snapshot["recent_requests"][0]["latest_message"]["is_mine"])
+        self.assertEqual(
+            snapshot["recent_requests"][0]["latest_message"]["sender_role"],
+            Message.Actor.REQUESTER,
+        )
+
+    @patch("chat.websocket_utils.send_received_request_inbox_websocket")
+    def test_message_creation_refreshes_inbox_for_requester_and_target(self, mock_refresh):
+        requester = User.objects.create_user(
+            email="requester3@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+        shy_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester Refresh",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Realtime Target",
+            target_email=self.user.email,
+            description="Inbox refresh request",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+
+        create_message_for_request(
+            shy_request,
+            "Please refresh both inboxes",
+            user=requester,
+            run_async_business_logic=False,
+        )
+
+        refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
+        self.assertEqual(refreshed_user_ids, {requester.id, self.user.id})

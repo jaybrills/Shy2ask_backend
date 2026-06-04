@@ -34,13 +34,74 @@ def serialize_message_for_websocket(message):
     }
 
 
-def build_received_request_inbox_snapshot(user, *, limit: int = 20):
-    """Return recent received requests plus aggregate stats for a target user."""
+def _normalize_email(email: str) -> str:
+    if not email:
+        return ""
+    return get_user_model().objects.normalize_email(email).lower()
+
+
+def actor_label(actor_role: str | None) -> str:
+    mapping = {
+        "requester": "Requester",
+        "target": "Target",
+        "staff": "Staff",
+        "system": "System",
+    }
+    return mapping.get(actor_role, (actor_role or "").title() or "Unknown")
+
+
+def viewer_role_for_request(shy_request, user) -> str | None:
+    if not user or not getattr(user, "is_authenticated", False):
+        return None
+
+    user_email = _normalize_email(getattr(user, "email", ""))
+    if user.id in {shy_request.user_id, shy_request.requester_user_id}:
+        return "requester"
+    if user_email and user_email == _normalize_email(getattr(shy_request, "requester_email", "")):
+        return "requester"
+    if user.id == shy_request.target_user_id:
+        return "target"
+    if user_email and user_email == _normalize_email(getattr(shy_request, "target_email", "")):
+        return "target"
+    return None
+
+
+def request_direction_for_user(shy_request, user) -> str | None:
+    viewer_role = viewer_role_for_request(shy_request, user)
+    if viewer_role == "requester":
+        return "sent"
+    if viewer_role == "target":
+        return "received"
+    return None
+
+
+def decorate_message_for_viewer(message, viewer_role: str | None):
+    message = dict(message)
+    sender_role = message.get("sender")
+    recipient_role = message.get("recipient")
+    message["direction"] = "outbound" if viewer_role and sender_role == viewer_role else "inbound"
+    message["is_mine"] = bool(viewer_role and sender_role == viewer_role)
+    message["sender_role"] = sender_role
+    message["recipient_role"] = recipient_role
+    message["sender_label"] = actor_label(sender_role)
+    message["recipient_label"] = actor_label(recipient_role)
+    return message
+
+
+def build_request_inbox_snapshot(user, *, limit: int = 20):
+    """Return a role-aware inbox snapshot for requests connected to the user."""
     from .models import Message, ShyRequest
 
     if not user or not getattr(user, "is_authenticated", False):
         return {
+            "viewer": {
+                "id": None,
+                "role": None,
+                "label": "Guest",
+            },
             "stats": {
+                "total_requests_count": 0,
+                "sent_requests_count": 0,
                 "received_requests_count": 0,
                 "pending_requests_count": 0,
                 "cancelled_requests_count": 0,
@@ -50,13 +111,18 @@ def build_received_request_inbox_snapshot(user, *, limit: int = 20):
             "recent_requests": [],
         }
 
-    request_filters = Q(target_user=user)
-    if getattr(user, "email", ""):
-        request_filters |= Q(target_email__iexact=user.email)
+    user_email = _normalize_email(getattr(user, "email", ""))
+    requester_filters = Q(user=user) | Q(requester_user=user)
+    target_filters = Q(target_user=user)
+    if user_email:
+        requester_filters |= Q(requester_email__iexact=user_email)
+        target_filters |= Q(target_email__iexact=user_email)
 
-    queryset = ShyRequest.objects.with_related().filter(request_filters).distinct()
+    queryset = ShyRequest.objects.with_related().filter(requester_filters | target_filters).distinct()
     stats = queryset.aggregate(
-        received_requests_count=Count("id", distinct=True),
+        total_requests_count=Count("id", distinct=True),
+        sent_requests_count=Count("id", filter=requester_filters, distinct=True),
+        received_requests_count=Count("id", filter=target_filters, distinct=True),
         pending_requests_count=Count(
             "id",
             filter=Q(status=ShyRequest.Status.SUBMITTED, is_blocked=False),
@@ -71,62 +137,103 @@ def build_received_request_inbox_snapshot(user, *, limit: int = 20):
     )
     stats["rejected_requests_count"] = stats["cancelled_requests_count"]
 
-    latest_message_id_subquery = (
-        Message.objects.filter(request=OuterRef("pk"))
-        .visible_to(Message.Actor.TARGET)
-        .order_by("-created_at")
-        .values("id")[:1]
-    )
-    latest_message_created_at_subquery = (
-        Message.objects.filter(request=OuterRef("pk"))
-        .visible_to(Message.Actor.TARGET)
-        .order_by("-created_at")
-        .values("created_at")[:1]
-    )
-
     recent_requests = list(
         queryset.annotate(
-            latest_message_id=Subquery(latest_message_id_subquery),
-            latest_message_created_at=Subquery(latest_message_created_at_subquery),
+            latest_message_created_at=Subquery(
+                Message.objects.filter(request=OuterRef("pk"))
+                .order_by("-created_at")
+                .values("created_at")[:1]
+            ),
         )
         .order_by("-latest_message_created_at", "-updated_at", "-created_at")[:limit]
     )
 
-    latest_message_ids = [request.latest_message_id for request in recent_requests if request.latest_message_id]
-    latest_messages = {
-        message.id: message
-        for message in Message.objects.filter(id__in=latest_message_ids).select_related("parent_message")
-    }
+    items = []
+    for request in recent_requests:
+        viewer_role = viewer_role_for_request(request, user)
+        latest_message_obj = (
+            Message.objects.filter(request=request)
+            .visible_to(viewer_role)
+            .select_related("parent_message")
+            .order_by("-created_at")
+            .first()
+        )
+        latest_message = None
+        if latest_message_obj:
+            latest_message = decorate_message_for_viewer(
+                serialize_message_for_websocket(latest_message_obj),
+                viewer_role,
+            )
 
-    return {
-        "stats": stats,
-        "recent_requests": [
+        direction = request_direction_for_user(request, user)
+        items.append(
             {
                 "id": request.id,
                 "tracking_code": request.tracking_code,
                 "status": request.status,
                 "is_blocked": request.is_blocked,
+                "direction": direction,
+                "is_sent": direction == "sent",
+                "is_received": direction == "received",
+                "viewer_role": viewer_role,
+                "viewer_label": actor_label(viewer_role),
                 "requester_name": request.requester_display_name,
                 "requester_email": request.requester_email,
                 "target_name": request.target_display_name,
                 "target_email": request.target_email,
+                "counterparty_role": "target" if viewer_role == "requester" else "requester" if viewer_role == "target" else None,
+                "counterparty_label": "Target" if viewer_role == "requester" else "Requester" if viewer_role == "target" else None,
+                "counterparty_name": request.target_display_name if viewer_role == "requester" else request.requester_display_name if viewer_role == "target" else "",
+                "counterparty_email": request.target_email if viewer_role == "requester" else request.requester_email if viewer_role == "target" else "",
                 "description": request.description,
                 "created_at": request.created_at.isoformat() if request.created_at else None,
                 "updated_at": request.updated_at.isoformat() if request.updated_at else None,
-                "latest_message": serialize_message_for_websocket(latest_messages[request.latest_message_id])
-                if request.latest_message_id in latest_messages
-                else None,
+                "latest_message": latest_message,
             }
-            for request in recent_requests
-        ],
+        )
+
+    items.sort(
+        key=lambda item: (
+            1 if (item.get("latest_message") or {}).get("message_kind") == "reply" else 0,
+            (item.get("latest_message") or {}).get("created_at")
+            or item.get("updated_at")
+            or item.get("created_at")
+            or "",
+        ),
+        reverse=True,
+    )
+
+    return {
+        "viewer": {
+            "id": user.id,
+            "role": "participant",
+            "label": "Participant",
+        },
+        "stats": stats,
+        "recent_requests": items,
     }
 
 
 def get_request_inbox_user_ids(shy_request):
-    """Return user IDs that should receive inbox refreshes for a request."""
+    """Return participant user IDs that should receive inbox refreshes for a request."""
     user_ids = set()
+    if getattr(shy_request, "user_id", None):
+        user_ids.add(shy_request.user_id)
+    if getattr(shy_request, "requester_user_id", None):
+        user_ids.add(shy_request.requester_user_id)
     if getattr(shy_request, "target_user_id", None):
         user_ids.add(shy_request.target_user_id)
+
+    requester_email = (getattr(shy_request, "requester_email", "") or "").strip()
+    if requester_email:
+        matched_user_id = (
+            get_user_model()
+            .objects.filter(email__iexact=requester_email)
+            .values_list("id", flat=True)
+            .first()
+        )
+        if matched_user_id:
+            user_ids.add(matched_user_id)
 
     target_email = (getattr(shy_request, "target_email", "") or "").strip()
     if target_email:
@@ -139,6 +246,11 @@ def get_request_inbox_user_ids(shy_request):
         if matched_user_id:
             user_ids.add(matched_user_id)
     return user_ids
+
+
+def build_received_request_inbox_snapshot(user, *, limit: int = 20):
+    """Backward-compatible alias for the participant inbox snapshot."""
+    return build_request_inbox_snapshot(user, limit=limit)
 
 
 def send_notification_websocket(user_id, notification_data):
