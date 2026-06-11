@@ -35,6 +35,9 @@ body {
 }
 
 .logo-bubble {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.5rem 1rem;
     border: 3px solid var(--dark);
     border-radius: 18px;
@@ -46,6 +49,13 @@ body {
     font-family: 'Fredoka One', cursive;
     letter-spacing: 1px;
     font-size: 1.3rem;
+}
+
+.site-logo {
+    display: block;
+    height: auto;
+    max-height: 42px;
+    max-width: min(180px, 30vw);
 }
 
 .main-nav a {
@@ -504,6 +514,16 @@ body {
 .small-text { font-size: 0.9rem; color: #4b5563; }
 
 @media (max-width: 900px) {
+    .site-header {
+        padding: 0.85rem 1rem;
+    }
+    .logo-bubble {
+        padding: 0.35rem 0.7rem;
+    }
+    .site-logo {
+        max-height: 34px;
+        max-width: min(140px, 42vw);
+    }
     .form-section .form-layout {
         grid-template-columns: 1fr;
     }
@@ -511,4 +531,3 @@ body {
         position: static;
     }
 }
-
