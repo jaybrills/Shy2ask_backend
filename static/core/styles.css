@@ -38,7 +38,7 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem 1rem;
+    padding: 0.25rem 0.55rem;
     border: 3px solid var(--dark);
     border-radius: 18px;
     background: var(--yellow);
@@ -54,8 +54,8 @@ body {
 .site-logo {
     display: block;
     height: auto;
-    max-height: 42px;
-    max-width: min(180px, 30vw);
+    max-height: 30px;
+    max-width: min(132px, 24vw);
 }
 
 .main-nav a {
@@ -518,11 +518,11 @@ body {
         padding: 0.85rem 1rem;
     }
     .logo-bubble {
-        padding: 0.35rem 0.7rem;
+        padding: 0.2rem 0.45rem;
     }
     .site-logo {
-        max-height: 34px;
-        max-width: min(140px, 42vw);
+        max-height: 26px;
+        max-width: min(112px, 38vw);
     }
     .form-section .form-layout {
         grid-template-columns: 1fr;

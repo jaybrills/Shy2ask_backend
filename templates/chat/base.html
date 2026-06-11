@@ -81,7 +81,13 @@
 <body class="comic-bg">
     <header class="site-header">
         <a class="logo-bubble" href="{% url 'account:home' %}" aria-label="Shy2Ask home">
-            <img class="site-logo" src="{{ site_logo_url }}" alt="Shy2Ask logo">
+            <img
+                class="site-logo"
+                src="{{ site_logo_url }}"
+                alt="Shy2Ask logo"
+                width="132"
+                height="30"
+            >
         </a>
         <nav class="main-nav">
             <a href="{% url 'account:home' %}">Home</a>
