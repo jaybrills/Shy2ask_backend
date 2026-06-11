@@ -82,6 +82,15 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         country_code = getattr(self.request, "detected_country", "") or ""
         instance = serializer.save(country_code=country_code)
 
+        def refresh_request_inbox():
+            try:
+                for target_user_id in get_request_inbox_user_ids(instance):
+                    send_received_request_inbox_websocket(target_user_id)
+            except Exception:
+                logger.exception("Failed immediate request inbox websocket refresh for request %s", instance.id)
+
+        transaction.on_commit(refresh_request_inbox)
+
         try:
             from .tasks import process_request_created_task
 

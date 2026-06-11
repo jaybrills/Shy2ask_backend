@@ -252,3 +252,41 @@ class RealtimeAPITest(TestCase):
 
         refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
         self.assertEqual(refreshed_user_ids, {requester.id, self.user.id})
+
+    @patch("chat.tasks.process_request_created_task.delay")
+    @patch("chat.api_views.send_received_request_inbox_websocket")
+    def test_request_creation_refreshes_inbox_for_requester_and_target(self, mock_refresh, mock_delay):
+        requester = User.objects.create_user(
+            email="requester4@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+        requester_token, _ = Token.objects.get_or_create(user=requester)
+        target = User.objects.create_user(
+            email="target4@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+
+        payload = {
+            "requester_name": "Requester Four",
+            "requester_email": requester.email,
+            "target_name": "Target Four",
+            "target_email": target.email,
+            "description": "Fresh request should refresh inbox",
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/requests/",
+                data=json.dumps(payload),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {requester_token.key}",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
+        self.assertEqual(refreshed_user_ids, {requester.id, target.id})
+        mock_delay.assert_called_once_with(response.json()["id"])
