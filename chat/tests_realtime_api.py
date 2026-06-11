@@ -243,12 +243,13 @@ class RealtimeAPITest(TestCase):
             status=ShyRequest.Status.SUBMITTED,
         )
 
-        create_message_for_request(
-            shy_request,
-            "Please refresh both inboxes",
-            user=requester,
-            run_async_business_logic=False,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            create_message_for_request(
+                shy_request,
+                "Please refresh both inboxes",
+                user=requester,
+                run_async_business_logic=False,
+            )
 
         refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
         self.assertEqual(refreshed_user_ids, {requester.id, self.user.id})
@@ -290,3 +291,45 @@ class RealtimeAPITest(TestCase):
         refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
         self.assertEqual(refreshed_user_ids, {requester.id, target.id})
         mock_delay.assert_called_once_with(response.json()["id"])
+
+    @patch("chat.websocket_utils.send_received_request_inbox_websocket")
+    def test_reply_by_tracking_refreshes_inbox_for_requester_and_target(self, mock_refresh):
+        requester = User.objects.create_user(
+            email="requester5@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+        target = User.objects.create_user(
+            email="target5@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+        shy_request = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Requester Five",
+            requester_email=requester.email,
+            target_user=target,
+            target_name="Target Five",
+            target_email=target.email,
+            description="Tracking reply refresh test",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/requests/reply/",
+                data=json.dumps(
+                    {
+                        "tracking_code": shy_request.tracking_code,
+                        "body": "Reply should refresh inbox",
+                    }
+                ),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        refreshed_user_ids = {call.args[0] for call in mock_refresh.call_args_list}
+        self.assertEqual(refreshed_user_ids, {requester.id, target.id})

@@ -1,9 +1,14 @@
+import logging
+
 from django.conf import settings
 from django.db import transaction
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError
 
 from .models import Message, ShyRequest
+
+
+logger = logging.getLogger(__name__)
 
 
 class MessageAccessError(PermissionDenied):
@@ -121,13 +126,16 @@ def create_message_for_request(
     msg.full_clean()
     msg.save()
 
-    try:
-        from .websocket_utils import get_request_inbox_user_ids, send_received_request_inbox_websocket
+    def refresh_request_inbox():
+        try:
+            from .websocket_utils import get_request_inbox_user_ids, send_received_request_inbox_websocket
 
-        for user_id in get_request_inbox_user_ids(shy_request):
-            send_received_request_inbox_websocket(user_id)
-    except Exception:
-        pass
+            for user_id in get_request_inbox_user_ids(shy_request):
+                send_received_request_inbox_websocket(user_id)
+        except Exception:
+            logger.exception("Failed request inbox websocket refresh for request %s", shy_request.id)
+
+    transaction.on_commit(refresh_request_inbox)
 
     if run_async_business_logic:
         try:
