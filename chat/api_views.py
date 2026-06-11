@@ -25,6 +25,7 @@ from .websocket_utils import (
     send_chat_message_websocket,
     send_received_request_inbox_websocket,
     serialize_message_for_websocket,
+    viewer_role_for_request,
 )
 from account.api_views import BearerTokenAuthentication
 from account.permissions import IsVerified
@@ -110,12 +111,9 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
 
     def _viewer_role(self, request, shy_request, tracking_code: str = ""):
         user = request.user if request.user.is_authenticated else None
-        if user and user.id in {shy_request.user_id, shy_request.requester_user_id}:
-            return Message.Actor.REQUESTER
-        if user and user.id == shy_request.target_user_id:
-            return Message.Actor.TARGET
-        if user and shy_request.target_email and getattr(user, "email", "").lower() == shy_request.target_email.lower():
-            return Message.Actor.TARGET
+        viewer_role = viewer_role_for_request(shy_request, user) if user else None
+        if viewer_role:
+            return viewer_role
         if tracking_code and tracking_code == shy_request.tracking_code:
             return Message.Actor.TARGET
         return None

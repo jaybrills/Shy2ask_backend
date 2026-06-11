@@ -6,6 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError
 
 from .models import Message, ShyRequest
+from .websocket_utils import viewer_role_for_request
 
 
 logger = logging.getLogger(__name__)
@@ -18,18 +19,17 @@ class MessageAccessError(PermissionDenied):
 def can_access_conversation(shy_request: ShyRequest, user=None, tracking_code: str | None = None) -> bool:
     """Requester (owner) or responder (tracking code) can access the conversation."""
     user = user if getattr(user, "is_authenticated", False) else None
-    if user and user.id in {shy_request.user_id, shy_request.requester_user_id, shy_request.target_user_id}:
+    if user and viewer_role_for_request(shy_request, user):
         return True
     return bool(tracking_code and tracking_code == shy_request.tracking_code)
 
 
 def _resolve_sender(shy_request: ShyRequest, user=None, tracking_code: str | None = None):
     user = user if getattr(user, "is_authenticated", False) else None
-    if user and user.id in {shy_request.user_id, shy_request.requester_user_id}:
+    viewer_role = viewer_role_for_request(shy_request, user) if user else None
+    if viewer_role == Message.Actor.REQUESTER:
         return Message.Actor.REQUESTER, user
-    if user and shy_request.target_user_id == user.id:
-        return Message.Actor.TARGET, user
-    if user and shy_request.target_email and user.email.lower() == shy_request.target_email.lower():
+    if viewer_role == Message.Actor.TARGET:
         return Message.Actor.TARGET, user
     if tracking_code and tracking_code == shy_request.tracking_code:
         return Message.Actor.TARGET, None

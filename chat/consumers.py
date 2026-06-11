@@ -12,6 +12,7 @@ from .websocket_utils import (
     build_request_inbox_snapshot,
     decorate_message_for_viewer,
     serialize_message_for_websocket,
+    viewer_role_for_request,
 )
 
 
@@ -57,12 +58,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
         else:
-            # Authenticated: owner -> requester; target -> target
-            if self.user.id in {request.user_id, request.requester_user_id}:
+            viewer_role = viewer_role_for_request(request, self.user)
+            if viewer_role == Message.Actor.REQUESTER:
                 self.is_target = False
-            elif self.user.id == request.target_user_id:
-                self.is_target = True
-            elif request.target_email and self.user.email.lower() == request.target_email.lower():
+            elif viewer_role == Message.Actor.TARGET:
                 self.is_target = True
             else:
                 await self.close()
@@ -377,12 +376,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     def get_unread_notifications(self):
         """Get unread notifications for the user."""
         try:
-            # Get notifications for user's requests
-            user_requests = ShyRequest.objects.filter(user=self.user)
-            notifications = Notification.objects.filter(
-                related_request__in=user_requests,
-                is_read=False
-            ).order_by("-created_at")[:20]
+            notifications = (
+                Notification.objects.unread()
+                .for_recipient(user=self.user)
+                .select_related("related_request")
+                .order_by("-created_at")[:20]
+            )
 
             return [
                 {
@@ -404,9 +403,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     def mark_notification_read(self, notification_id):
         """Mark a notification as read."""
         try:
-            notification = Notification.objects.get(
-                pk=notification_id,
-                related_request__user=self.user
+            notification = Notification.objects.for_recipient(user=self.user).get(
+                pk=notification_id
             )
             notification.is_read = True
             notification.save()

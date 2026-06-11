@@ -5,6 +5,33 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+def _normalize_email(email: str | None) -> str:
+    if not email:
+        return ""
+
+    from account.models import User
+
+    return User.objects.normalize_email(email).lower()
+
+
+def _resolve_notification_recipient_user(recipient, related_request=None):
+    if not recipient:
+        return None
+
+    from account.models import User
+
+    recipient_user = User.objects.find_by_email(recipient)
+    if recipient_user or not related_request:
+        return recipient_user
+
+    normalized_recipient = _normalize_email(recipient)
+    if normalized_recipient and normalized_recipient == _normalize_email(getattr(related_request, "requester_email", "")):
+        return related_request.requester_identity
+    if normalized_recipient and normalized_recipient == _normalize_email(getattr(related_request, "target_email", "")):
+        return related_request.target_user
+    return None
+
+
 def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True, push_type: str | None = None, deliver_push: bool = True):
     """
     Central notification dispatcher — email + DB record + WebSocket + push.
@@ -56,12 +83,7 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
         "tracking_code": related_request.tracking_code if related_request else None,
     }
 
-    recipient_user = None
-    if recipient:
-        from account.models import User
-        recipient_user = User.objects.find_by_email(recipient)
-    if not recipient_user and related_request and related_request.user:
-        recipient_user = related_request.user
+    recipient_user = _resolve_notification_recipient_user(recipient, related_request=related_request)
     if recipient_user:
         send_notification_websocket(recipient_user.id, payload)
 
