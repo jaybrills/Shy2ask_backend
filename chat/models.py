@@ -249,10 +249,16 @@ class MessageQuerySet(SoftDeleteQuerySet):
         return self.visible_to(actor_role).filter(recipient=actor_role, is_read=False)
 
     def mark_read_for_actor(self, actor_role: str | None):
+        return self.set_read_state_for_actor(actor_role, is_read=True)
+
+    def set_read_state_for_actor(self, actor_role: str | None, *, is_read: bool):
         if not actor_role:
             return 0
-        timestamp = timezone.now()
-        return self.unread_for_actor(actor_role).update(is_read=True, read_at=timestamp)
+
+        queryset = self.visible_to(actor_role).filter(recipient=actor_role)
+        if is_read:
+            return queryset.filter(is_read=False).update(is_read=True, read_at=timezone.now())
+        return queryset.filter(is_read=True).update(is_read=False, read_at=None)
 
     def soft_delete_for_actor(self, actor_role: str | None):
         if not actor_role:
@@ -770,6 +776,18 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
         if actor_role:
             return self.soft_delete_for_actor(actor_role)
         return self.soft_delete()
+
+    def set_read_state_for_actor(self, actor_role: str | None, *, is_read: bool, save: bool = True):
+        if actor_role != self.recipient or not self.is_visible_to(actor_role):
+            return False
+        if self.is_read == is_read:
+            return True
+
+        self.is_read = is_read
+        self.read_at = timezone.now() if is_read else None
+        if save:
+            self.save(update_fields=["is_read", "read_at"])
+        return True
 
 
 class Notification(EmailUserResolutionModel, models.Model):

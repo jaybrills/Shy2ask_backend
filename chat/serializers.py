@@ -325,6 +325,14 @@ class BulkSoftDeleteSerializer(serializers.Serializer):
     )
 
 
+class MessageReadStateSerializer(serializers.Serializer):
+    is_read = serializers.BooleanField()
+
+
+class BulkMessageReadStateSerializer(BulkSoftDeleteSerializer):
+    is_read = serializers.BooleanField()
+
+
 class RequestBlockSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=255)
 

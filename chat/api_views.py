@@ -32,10 +32,12 @@ from account.api_views import BearerTokenAuthentication
 from account.permissions import IsVerified
 from .serializers import (
     BulkSoftDeleteSerializer,
+    BulkMessageReadStateSerializer,
     CensorImageResultSerializer,
     CensorResultSerializer,
     CensorTextInputSerializer,
     FAQSerializer,
+    MessageReadStateSerializer,
     MessageInputSerializer,
     MessageSerializer,
     RequestBlockSerializer,
@@ -189,9 +191,14 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             return 0
 
         updated_count = Message.objects.for_request(shy_request).mark_read_for_actor(viewer_role)
-        if updated_count and request.user.is_authenticated:
-            send_received_request_inbox_websocket(request.user.id)
+        if updated_count:
+            for target_user_id in get_request_inbox_user_ids(shy_request):
+                send_received_request_inbox_websocket(target_user_id)
         return updated_count
+
+    def _refresh_request_inbox(self, shy_request):
+        for target_user_id in get_request_inbox_user_ids(shy_request):
+            send_received_request_inbox_websocket(target_user_id)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
@@ -220,10 +227,8 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         if not self._can_manage_request(request, instance):
             return Response({"detail": "You are not allowed to delete this request."}, status=status.HTTP_403_FORBIDDEN)
-        target_user_ids = get_request_inbox_user_ids(instance)
         instance.delete()
-        for target_user_id in target_user_ids:
-            send_received_request_inbox_websocket(target_user_id)
+        self._refresh_request_inbox(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get"], permission_classes=[permissions.AllowAny])
@@ -243,12 +248,10 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         payload.is_valid(raise_exception=True)
 
         queryset = ShyRequest.objects.for_participant(user=request.user).filter(id__in=payload.validated_data["ids"])
-        target_user_ids = set()
-        for shy_request in queryset.select_related("target_user"):
-            target_user_ids.update(get_request_inbox_user_ids(shy_request))
+        affected_requests = list(queryset.select_related("target_user"))
         deleted_count = queryset.soft_delete()
-        for target_user_id in target_user_ids:
-            send_received_request_inbox_websocket(target_user_id)
+        for shy_request in affected_requests:
+            self._refresh_request_inbox(shy_request)
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["delete"], permission_classes=[IsVerified], url_path=r"messages/(?P<message_id>[^/.]+)")
@@ -279,6 +282,75 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         ).soft_delete_for_actor(self._viewer_role(request, shy_request))
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[permissions.AllowAny],
+        url_path=r"messages/(?P<message_id>[^/.]+)/read-state",
+    )
+    def update_message_read_state(self, request, pk=None, message_id=None):
+        payload = MessageReadStateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        try:
+            shy_request, tracking_code = self._get_conversation_request(request, pk)
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        message = get_object_or_404(Message.objects.with_related(), pk=message_id, request=shy_request)
+        updated = message.set_read_state_for_actor(viewer_role, is_read=payload.validated_data["is_read"])
+        if not updated:
+            return Response(
+                {"detail": "You can only update read state for messages addressed to you."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        self._refresh_request_inbox(shy_request)
+        return Response(
+            {
+                "request_id": shy_request.id,
+                "message_id": message.id,
+                "is_read": message.is_read,
+                "unread_count": unread_message_count_for_request(shy_request, viewer_role),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[permissions.AllowAny],
+        url_path="messages/read-state",
+    )
+    def bulk_update_message_read_state(self, request, pk=None):
+        payload = BulkMessageReadStateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        try:
+            shy_request, tracking_code = self._get_conversation_request(request, pk)
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        updated_count = Message.objects.for_request(shy_request).filter(
+            id__in=payload.validated_data["ids"],
+        ).set_read_state_for_actor(
+            viewer_role,
+            is_read=payload.validated_data["is_read"],
+        )
+
+        self._refresh_request_inbox(shy_request)
+        return Response(
+            {
+                "request_id": shy_request.id,
+                "updated_count": updated_count,
+                "is_read": payload.validated_data["is_read"],
+                "unread_count": unread_message_count_for_request(shy_request, viewer_role),
+            },
+            status=status.HTTP_200_OK,
+        )
+
     @action(detail=True, methods=["post"], permission_classes=[IsVerified])
     def block(self, request, pk=None):
         payload = RequestBlockSerializer(data=request.data)
@@ -292,8 +364,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             actor=request.user,
             note=payload.validated_data.get("note", ""),
         )
-        for target_user_id in get_request_inbox_user_ids(shy_request):
-            send_received_request_inbox_websocket(target_user_id)
+        self._refresh_request_inbox(shy_request)
         return Response(
             {
                 "request_id": shy_request.id,

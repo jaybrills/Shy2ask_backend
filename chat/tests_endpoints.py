@@ -467,6 +467,105 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertIn(first_reply.id, target_message_ids)
         self.assertIn(second_reply.id, target_message_ids)
 
+    def test_single_message_read_state_endpoint(self):
+        initial_message = self.request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST)
+
+        conversation = self.client.get(
+            f"/api/requests/{self.request.id}/conversation/",
+            {"tracking_code": self.request.tracking_code},
+        )
+        self.assertEqual(conversation.status_code, 200)
+
+        initial_message.refresh_from_db()
+        self.assertTrue(initial_message.is_read)
+
+        mark_unread = self.client.post(
+            f"/api/requests/{self.request.id}/messages/{initial_message.id}/read-state/",
+            {"tracking_code": self.request.tracking_code, "is_read": False},
+            format="json",
+        )
+        self.assertEqual(mark_unread.status_code, 200)
+        self.assertEqual(mark_unread.data["message_id"], initial_message.id)
+        self.assertFalse(mark_unread.data["is_read"])
+        self.assertEqual(mark_unread.data["unread_count"], 1)
+
+        initial_message.refresh_from_db()
+        self.assertFalse(initial_message.is_read)
+        self.assertIsNone(initial_message.read_at)
+
+        mark_read = self.client.post(
+            f"/api/requests/{self.request.id}/messages/{initial_message.id}/read-state/",
+            {"tracking_code": self.request.tracking_code, "is_read": True},
+            format="json",
+        )
+        self.assertEqual(mark_read.status_code, 200)
+        self.assertTrue(mark_read.data["is_read"])
+        self.assertEqual(mark_read.data["unread_count"], 0)
+
+        initial_message.refresh_from_db()
+        self.assertTrue(initial_message.is_read)
+        self.assertIsNotNone(initial_message.read_at)
+
+    def test_bulk_message_read_state_endpoint(self):
+        owner_reply_one = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "Owner follow-up one"},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+        owner_reply_two = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "Owner follow-up two"},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(owner_reply_one.status_code, 201)
+        self.assertEqual(owner_reply_two.status_code, 201)
+
+        message_ids = [owner_reply_one.data["id"], owner_reply_two.data["id"]]
+        bulk_mark_read = self.client.post(
+            f"/api/requests/{self.request.id}/messages/read-state/",
+            {"tracking_code": self.request.tracking_code, "ids": message_ids, "is_read": True},
+            format="json",
+        )
+        self.assertEqual(bulk_mark_read.status_code, 200)
+        self.assertEqual(bulk_mark_read.data["updated_count"], 2)
+        self.assertEqual(bulk_mark_read.data["unread_count"], 1)
+
+        read_messages = list(Message.objects.filter(id__in=message_ids).values_list("is_read", flat=True))
+        self.assertEqual(read_messages, [True, True])
+
+        bulk_mark_unread = self.client.post(
+            f"/api/requests/{self.request.id}/messages/read-state/",
+            {"tracking_code": self.request.tracking_code, "ids": message_ids, "is_read": False},
+            format="json",
+        )
+        self.assertEqual(bulk_mark_unread.status_code, 200)
+        self.assertEqual(bulk_mark_unread.data["updated_count"], 2)
+        self.assertEqual(bulk_mark_unread.data["unread_count"], 3)
+
+        unread_messages = list(Message.objects.filter(id__in=message_ids).values_list("is_read", flat=True))
+        self.assertEqual(unread_messages, [False, False])
+
+    def test_cannot_update_read_state_for_message_not_addressed_to_viewer(self):
+        owner_reply = self.client.post(
+            f"/api/requests/{self.request.id}/messages/",
+            {"body": "Owner outbound message"},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+        self.assertEqual(owner_reply.status_code, 201)
+
+        response = self.client.post(
+            f"/api/requests/{self.request.id}/messages/{owner_reply.data['id']}/read-state/",
+            {"is_read": True},
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("addressed to you", response.data["detail"])
+
     def test_blocking_three_requests_deactivates_requester(self):
         requests_to_block = [self.request]
         for index in range(2):
