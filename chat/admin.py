@@ -194,7 +194,7 @@ class ShyRequestAdmin(ModelAdmin):
         colors = {
             ShyRequest.Status.DRAFT: "#667085",
             ShyRequest.Status.SUBMITTED: "#1d4ed8",
-            ShyRequest.Status.IN_PROGRESS: "#b45309",
+            ShyRequest.Status.ONGOING: "#b45309",
             ShyRequest.Status.COMPLETED: "#15803d",
             ShyRequest.Status.REJECTED: "#b42318",
         }

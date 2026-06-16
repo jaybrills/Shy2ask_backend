@@ -11,7 +11,9 @@ from .models import Message, ShyRequest, Notification
 from .websocket_utils import (
     build_request_inbox_snapshot,
     decorate_message_for_viewer,
+    send_received_request_inbox_websocket,
     serialize_message_for_websocket,
+    unread_message_count_for_request,
     viewer_role_for_request,
 )
 
@@ -192,6 +194,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
             viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
+            updated_count = Message.objects.filter(request=request).mark_read_for_actor(viewer_role)
+            if updated_count and getattr(self.user, "is_authenticated", False):
+                send_received_request_inbox_websocket(self.user.id)
             messages = Message.objects.filter(request=request).visible_to(viewer_role).select_related(
                 "author",
                 "request",
@@ -233,10 +238,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_request_summary(self):
         request = ShyRequest.objects.get(pk=self.request_id)
+        viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
         return {
             "id": request.id,
             "tracking_code": request.tracking_code,
             "status": request.status,
+            "unread_count": unread_message_count_for_request(request, viewer_role),
             "service_channel": request.service_channel,
             "description": request.description,
             "created_at": request.created_at.isoformat(),

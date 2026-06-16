@@ -25,6 +25,7 @@ from .websocket_utils import (
     send_chat_message_websocket,
     send_received_request_inbox_websocket,
     serialize_message_for_websocket,
+    unread_message_count_for_request,
     viewer_role_for_request,
 )
 from account.api_views import BearerTokenAuthentication
@@ -146,6 +147,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
                 "id": shy_request.id,
                 "tracking_code": shy_request.tracking_code,
                 "status": shy_request.status,
+                "unread_count": unread_message_count_for_request(shy_request, viewer_role),
                 "service_channel": shy_request.service_channel,
                 "description": shy_request.description,
                 "created_at": shy_request.created_at,
@@ -180,6 +182,16 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def _visible_messages_qs(self, request, shy_request, tracking_code: str = ""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         return ConversationMessage.objects.for_request(shy_request).with_related().visible_to(viewer_role)
+
+    def _mark_conversation_read(self, request, shy_request, tracking_code: str = ""):
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        if not viewer_role:
+            return 0
+
+        updated_count = Message.objects.for_request(shy_request).mark_read_for_actor(viewer_role)
+        if updated_count and request.user.is_authenticated:
+            send_received_request_inbox_websocket(request.user.id)
+        return updated_count
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
@@ -221,6 +233,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         except MessageAccessError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
+        self._mark_conversation_read(request, shy_request, tracking_code=tracking_code)
         messages_qs = self._visible_messages_qs(request, shy_request, tracking_code=tracking_code)
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=tracking_code))
 
@@ -341,6 +354,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def conversation_by_tracking(self, request, tracking_code=None):
         normalized_tracking = (tracking_code or "").strip()
         shy_request = get_object_or_404(ShyRequest, tracking_code=normalized_tracking)
+        self._mark_conversation_read(request, shy_request, tracking_code=normalized_tracking)
         messages_qs = self._visible_messages_qs(request, shy_request, tracking_code=normalized_tracking)
         return Response(self._conversation_response(request, shy_request, messages_qs, tracking_code=normalized_tracking))
 
@@ -645,7 +659,7 @@ class RealtimeDocumentationView(APIView):
                     },
                     "history_event": {
                         "type": "chat.history",
-                        "request": {"id": 123, "tracking_code": "ABC123", "status": "submitted"},
+                        "request": {"id": 123, "tracking_code": "ABC123", "status": "ongoing"},
                         "viewer": {"role": "requester", "label": "Requester"},
                         "messages": [],
                     },
@@ -696,7 +710,7 @@ class RealtimeDocumentationView(APIView):
                             {
                                 "id": 123,
                                 "tracking_code": "ABC123",
-                                "status": "submitted",
+                                "status": "ongoing",
                                 "is_blocked": False,
                                 "direction": "received",
                                 "viewer_role": "target",
@@ -707,6 +721,7 @@ class RealtimeDocumentationView(APIView):
                                 "counterparty_role": "requester",
                                 "counterparty_label": "Requester",
                                 "counterparty_name": "Requester",
+                                "unread_count": 2,
                                 "description": "Need help with my request",
                                 "latest_message": {
                                     "id": 456,

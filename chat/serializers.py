@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from .message_service import resolve_display_name, resolve_recipient_name
 from .models import FAQ, FAQVideo, Attachment, Message, ShyRequest, SupportTicket, SupportTicketReply, user_display_name_for
+from .websocket_utils import unread_message_count_for_request, viewer_role_for_request
 
 
 User = get_user_model()
@@ -129,6 +130,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
     direction = serializers.SerializerMethodField()
     is_sent = serializers.SerializerMethodField()
     is_received = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
     requester_user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         required=False,
@@ -169,6 +171,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "direction",
             "is_sent",
             "is_received",
+            "unread_count",
             "is_blocked",
             "created_at",
             "attachments",
@@ -183,6 +186,7 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             "direction",
             "is_sent",
             "is_received",
+            "unread_count",
             "is_blocked",
             "created_at",
             "attachments",
@@ -209,6 +213,22 @@ class ShyRequestSerializer(serializers.ModelSerializer):
 
     def get_is_received(self, obj):
         return self.get_direction(obj) == "received"
+
+    def get_unread_count(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        viewer_role = viewer_role_for_request(obj, user) if getattr(user, "is_authenticated", False) else None
+        if not viewer_role:
+            tracking_code = ""
+            if request is not None:
+                tracking_code = (
+                    request.query_params.get("tracking_code")
+                    or request.data.get("tracking_code")
+                    or ""
+                ).strip()
+            if tracking_code and tracking_code == obj.tracking_code:
+                viewer_role = Message.Actor.TARGET
+        return unread_message_count_for_request(obj, viewer_role)
 
     def validate(self, attrs):
         request = self.context["request"]

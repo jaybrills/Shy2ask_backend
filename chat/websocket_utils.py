@@ -88,6 +88,14 @@ def decorate_message_for_viewer(message, viewer_role: str | None):
     return message
 
 
+def unread_message_count_for_request(shy_request, viewer_role: str | None) -> int:
+    from .models import Message
+
+    if not viewer_role:
+        return 0
+    return Message.objects.for_request(shy_request).unread_for_actor(viewer_role).count()
+
+
 def build_request_inbox_snapshot(user, *, limit: int = 20):
     """Return a role-aware inbox snapshot for requests connected to the user."""
     from .models import Message, ShyRequest
@@ -185,6 +193,7 @@ def build_request_inbox_snapshot(user, *, limit: int = 20):
                 "counterparty_label": "Target" if viewer_role == "requester" else "Requester" if viewer_role == "target" else None,
                 "counterparty_name": request.target_display_name if viewer_role == "requester" else request.requester_display_name if viewer_role == "target" else "",
                 "counterparty_email": request.target_email if viewer_role == "requester" else request.requester_email if viewer_role == "target" else "",
+                "unread_count": unread_message_count_for_request(request, viewer_role),
                 "description": request.description,
                 "created_at": request.created_at.isoformat() if request.created_at else None,
                 "updated_at": request.updated_at.isoformat() if request.updated_at else None,

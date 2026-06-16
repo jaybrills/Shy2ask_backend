@@ -36,7 +36,7 @@ class Command(BaseCommand):
                 'target_phone': '+41 79 987 6543',
                 'description': 'I saw John has a vintage car for sale. Can you ask if he would be willing to sell it to me? I\'m too shy to ask directly.',
                 'service_channel': ShyRequest.ServiceChannel.EMAIL,
-                'status': ShyRequest.Status.IN_PROGRESS,
+                'status': ShyRequest.Status.ONGOING,
             },
             {
                 'requester_name': 'Khajan',
@@ -79,7 +79,7 @@ class Command(BaseCommand):
                 'description': 'David mentioned he might be selling his bike. Can you ask if it\'s still available and what price he\'s looking for?',
                 'service_channel': ShyRequest.ServiceChannel.CALL,
                 'call_minutes': 3,
-                'status': ShyRequest.Status.IN_PROGRESS,
+                'status': ShyRequest.Status.ONGOING,
             },
             {
                 'requester_name': 'Khajan',

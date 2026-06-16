@@ -243,6 +243,17 @@ class MessageQuerySet(SoftDeleteQuerySet):
             )
         return self
 
+    def unread_for_actor(self, actor_role: str | None):
+        if not actor_role:
+            return self.none()
+        return self.visible_to(actor_role).filter(recipient=actor_role, is_read=False)
+
+    def mark_read_for_actor(self, actor_role: str | None):
+        if not actor_role:
+            return 0
+        timestamp = timezone.now()
+        return self.unread_for_actor(actor_role).update(is_read=True, read_at=timestamp)
+
     def soft_delete_for_actor(self, actor_role: str | None):
         if not actor_role:
             return 0
@@ -341,7 +352,7 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
     class Status(models.TextChoices):
         DRAFT = ("draft", "Draft")
         SUBMITTED = ("submitted", "Submitted")
-        IN_PROGRESS = ("in_progress", "In progress")
+        ONGOING = ("ongoing", "Ongoing")
         COMPLETED = ("completed", "Completed")
         REJECTED = ("rejected", "Rejected")
         
@@ -427,6 +438,14 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
     def change_status(self, new_status: str):
         self.status = new_status
         self.save(update_fields=["status", "updated_at"])
+
+    def mark_ongoing(self, *, save: bool = True) -> bool:
+        if self.status in {self.Status.ONGOING, self.Status.COMPLETED, self.Status.REJECTED}:
+            return False
+        self.status = self.Status.ONGOING
+        if save:
+            self.save(update_fields=["status", "updated_at"])
+        return True
 
     @property
     def requester_identity(self):
@@ -652,6 +671,8 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     body = models.TextField()
     clean_body = models.TextField(blank=True)
     is_blocked = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
     deleted_by_sender = models.BooleanField(default=False)
     sender_deleted_at = models.DateTimeField(null=True, blank=True)
     deleted_by_recipient = models.BooleanField(default=False)
@@ -667,6 +688,7 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
             models.Index(fields=["sender", "created_at"]),
             models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
+            models.Index(fields=["request", "recipient", "is_read", "created_at"]),
             models.Index(fields=["is_deleted", "created_at"]),
             models.Index(fields=["deleted_by_sender", "created_at"]),
             models.Index(fields=["deleted_by_recipient", "created_at"]),
@@ -678,6 +700,8 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+        if self.message_kind == self.Kind.REPLY and self.request_id:
+            self.request.mark_ongoing()
 
     def clean(self):
         self._sync_email_user_pair(user_field="sender_user", email_field="sender_email")
