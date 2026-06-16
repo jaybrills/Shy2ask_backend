@@ -265,7 +265,9 @@ def build_request_inbox_snapshot(user, *, limit: int = 20):
             "role": "participant",
             "label": "Participant",
         },
+        "requestCount": len(items),
         "stats": stats,
+        "requests": items,
         "recent_requests": items,
     }
 

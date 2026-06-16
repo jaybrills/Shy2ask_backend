@@ -210,7 +210,10 @@ class RealtimeAPITest(TestCase):
 
         snapshot = build_received_request_inbox_snapshot(self.user)
 
+        self.assertEqual(snapshot["requestCount"], 3)
         self.assertEqual(snapshot["stats"]["received_requests_count"], 3)
+        self.assertEqual(len(snapshot["requests"]), 3)
+        self.assertEqual(snapshot["requests"][0]["id"], pending_request.id)
         self.assertEqual(snapshot["stats"]["pending_requests_count"], 0)
         self.assertEqual(snapshot["stats"]["cancelled_requests_count"], 2)
         self.assertEqual(snapshot["stats"]["rejected_requests_count"], 2)
@@ -259,7 +262,9 @@ class RealtimeAPITest(TestCase):
         snapshot = build_received_request_inbox_snapshot(requester)
 
         self.assertEqual(snapshot["viewer"]["role"], "participant")
+        self.assertEqual(snapshot["requestCount"], 1)
         self.assertEqual(snapshot["stats"]["total_requests_count"], 1)
+        self.assertEqual(len(snapshot["requests"]), 1)
         self.assertEqual(snapshot["stats"]["sent_requests_count"], 1)
         self.assertEqual(snapshot["stats"]["received_requests_count"], 0)
         self.assertEqual(snapshot["recent_requests"][0]["status"], ShyRequest.Status.ONGOING)

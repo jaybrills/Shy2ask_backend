@@ -194,8 +194,11 @@ class WebsocketConsumerTests(TransactionTestCase):
             try:
                 snapshot = await communicator.receive_json_from(timeout=5)
                 self.assertEqual(snapshot["type"], "request_inbox.snapshot")
+                self.assertEqual(snapshot["requestCount"], 1)
                 self.assertEqual(snapshot["stats"]["received_requests_count"], 1)
+                self.assertEqual(len(snapshot["requests"]), 1)
                 self.assertEqual(snapshot["recent_requests"][0]["id"], self.shy_request.id)
+                self.assertEqual(snapshot["requests"][0]["id"], self.shy_request.id)
                 self.assertEqual(snapshot["recent_requests"][0]["direction"], "received")
                 self.assertEqual(snapshot["recent_requests"][0]["unread_count"], 1)
                 self.assertIsNotNone(snapshot["recent_requests"][0]["latest_message"])
