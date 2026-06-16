@@ -62,7 +62,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     serializer_class = ShyRequestSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = [BearerTokenAuthentication]
-    http_method_names = ["get", "post", "delete"]
+    http_method_names = ["get", "post", "patch", "delete"]
 
     def get_queryset(self):
         qs = ShyRequest.objects.with_related()
