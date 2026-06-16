@@ -7,6 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 
 from account.emailing import build_email_context
 from account.models import User
+from chat.message_service import create_message_for_request
 from chat.models import ActiveShyRequest, ConversationMessage, Deal, Message, Notification, ShyRequest, SiteBranding
 
 class ChatModelTest(TestCase):
@@ -100,6 +101,43 @@ class ChatModelTest(TestCase):
 
         self.assertFalse(Message.objects.visible_to(Message.Actor.REQUESTER).filter(id=message.id).exists())
         self.assertTrue(Message.objects.visible_to(Message.Actor.TARGET).filter(id=message.id).exists())
+
+    def test_reply_creation_marks_request_ongoing(self):
+        self.request.status = ShyRequest.Status.SUBMITTED
+        self.request.save(update_fields=["status", "updated_at"])
+
+        create_message_for_request(
+            self.request,
+            "A real reply should move the request forward",
+            tracking_code=self.request.tracking_code,
+            run_async_business_logic=False,
+        )
+
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ShyRequest.Status.ONGOING)
+
+    def test_mark_read_for_actor_updates_only_recipient_messages(self):
+        inbound = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.REQUESTER,
+            recipient=Message.Actor.TARGET,
+            body="Unread for target",
+        )
+        outbound = Message.objects.create(
+            request=self.request,
+            sender=Message.Actor.TARGET,
+            recipient=Message.Actor.REQUESTER,
+            body="Not unread for target",
+        )
+
+        updated_count = Message.objects.for_request(self.request).mark_read_for_actor(Message.Actor.TARGET)
+
+        inbound.refresh_from_db()
+        outbound.refresh_from_db()
+        self.assertEqual(updated_count, 2)
+        self.assertTrue(inbound.is_read)
+        self.assertIsNotNone(inbound.read_at)
+        self.assertFalse(outbound.is_read)
 
     def test_default_email_context_uses_static_logo(self):
         context = build_email_context(site_url="https://backend.shy2ask.com")

@@ -688,7 +688,10 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
             models.Index(fields=["sender", "created_at"]),
             models.Index(fields=["recipient", "created_at"]),
             models.Index(fields=["author", "created_at"]),
-            models.Index(fields=["request", "recipient", "is_read", "created_at"]),
+            models.Index(
+                fields=["request", "recipient", "is_read", "created_at"],
+                name="chat_messag_request_3c5ad7_idx",
+            ),
             models.Index(fields=["is_deleted", "created_at"]),
             models.Index(fields=["deleted_by_sender", "created_at"]),
             models.Index(fields=["deleted_by_recipient", "created_at"]),

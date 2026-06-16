@@ -659,7 +659,7 @@ class RealtimeDocumentationView(APIView):
                     },
                     "history_event": {
                         "type": "chat.history",
-                        "request": {"id": 123, "tracking_code": "ABC123", "status": "ongoing"},
+                        "request": {"id": 123, "tracking_code": "ABC123", "status": "ongoing", "unread_count": 0},
                         "viewer": {"role": "requester", "label": "Requester"},
                         "messages": [],
                     },

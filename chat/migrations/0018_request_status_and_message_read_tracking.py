@@ -50,7 +50,7 @@ class Migration(migrations.Migration):
             model_name="message",
             index=models.Index(
                 fields=["request", "recipient", "is_read", "created_at"],
-                name="chat_messag_request_46ac25_idx",
+                name="chat_messag_request_3c5ad7_idx",
             ),
         ),
     ]

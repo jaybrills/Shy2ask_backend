@@ -163,11 +163,13 @@ class RealtimeAPITest(TestCase):
         snapshot = build_received_request_inbox_snapshot(self.user)
 
         self.assertEqual(snapshot["stats"]["received_requests_count"], 3)
-        self.assertEqual(snapshot["stats"]["pending_requests_count"], 1)
+        self.assertEqual(snapshot["stats"]["pending_requests_count"], 0)
         self.assertEqual(snapshot["stats"]["cancelled_requests_count"], 2)
         self.assertEqual(snapshot["stats"]["rejected_requests_count"], 2)
         self.assertEqual(snapshot["stats"]["blocked_requests_count"], 1)
         self.assertEqual(snapshot["recent_requests"][0]["id"], pending_request.id)
+        self.assertEqual(snapshot["recent_requests"][0]["status"], ShyRequest.Status.ONGOING)
+        self.assertEqual(snapshot["recent_requests"][0]["unread_count"], 2)
         self.assertEqual(
             snapshot["recent_requests"][0]["latest_message"]["clean_body"],
             "Most recent requester message",
@@ -208,9 +210,11 @@ class RealtimeAPITest(TestCase):
         self.assertEqual(snapshot["stats"]["total_requests_count"], 1)
         self.assertEqual(snapshot["stats"]["sent_requests_count"], 1)
         self.assertEqual(snapshot["stats"]["received_requests_count"], 0)
+        self.assertEqual(snapshot["recent_requests"][0]["status"], ShyRequest.Status.ONGOING)
         self.assertEqual(snapshot["recent_requests"][0]["direction"], "sent")
         self.assertTrue(snapshot["recent_requests"][0]["is_sent"])
         self.assertFalse(snapshot["recent_requests"][0]["is_received"])
+        self.assertEqual(snapshot["recent_requests"][0]["unread_count"], 0)
         self.assertEqual(snapshot["recent_requests"][0]["viewer_role"], Message.Actor.REQUESTER)
         self.assertEqual(snapshot["recent_requests"][0]["counterparty_role"], Message.Actor.TARGET)
         self.assertEqual(

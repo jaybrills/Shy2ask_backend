@@ -87,6 +87,7 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(response.data[0]["direction"], "received")
         self.assertFalse(response.data[0]["is_sent"])
         self.assertTrue(response.data[0]["is_received"])
+        self.assertEqual(response.data[0]["unread_count"], 1)
 
     @patch("chat.emailing.send_templated_email")
     @patch("chat.tasks.process_request_created_task.delay")
@@ -131,9 +132,12 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(conversation.status_code, 200)
         self.assertEqual(conversation.data["viewer"]["role"], Message.Actor.TARGET)
         self.assertEqual(conversation.data["participants"]["target"]["is_me"], True)
+        self.assertEqual(conversation.data["request"]["unread_count"], 0)
         self.assertEqual(conversation.data["messages"][0]["message_kind"], Message.Kind.INITIAL_REQUEST)
         self.assertFalse(conversation.data["messages"][0]["is_mine"])
         self.assertEqual(conversation.data["messages"][0]["direction"], "inbound")
+        self.request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST).refresh_from_db()
+        self.assertTrue(self.request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST).is_read)
 
         owner_post = self.client.post(
             f"/api/requests/{self.request.id}/messages/",
@@ -147,6 +151,14 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertTrue(owner_post.data["is_mine"])
         self.assertEqual(owner_post.data["direction"], "outbound")
         self.assertEqual(owner_post.data["sender_role"], Message.Actor.REQUESTER)
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ShyRequest.Status.ONGOING)
+
+        target_list = self.client.get("/api/requests/", **self.auth_headers(self.target_token))
+        self.assertEqual(target_list.status_code, 200)
+        target_request = next(item for item in target_list.data if item["id"] == self.request.id)
+        self.assertEqual(target_request["status"], ShyRequest.Status.ONGOING)
+        self.assertEqual(target_request["unread_count"], 1)
 
         target_post = self.client.post(
             f"/api/requests/{self.request.id}/messages/",
@@ -231,6 +243,8 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertEqual(reply.data["viewer"]["role"], Message.Actor.TARGET)
         self.assertTrue(reply.data["message"]["is_mine"])
         self.assertEqual(reply.data["message"]["direction"], "outbound")
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ShyRequest.Status.ONGOING)
 
         by_tracking = self.client.get(
             f"/api/requests/conversation/by-tracking/{self.request.tracking_code}/"
@@ -239,6 +253,8 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertIn("messages", by_tracking.data)
         self.assertGreaterEqual(len(by_tracking.data["messages"]), 2)
         self.assertEqual(by_tracking.data["viewer"]["role"], Message.Actor.TARGET)
+        self.assertEqual(by_tracking.data["request"]["status"], ShyRequest.Status.ONGOING)
+        self.assertEqual(by_tracking.data["request"]["unread_count"], 0)
 
     @patch("chat.emailing.send_templated_email")
     @patch("chat.tasks.process_request_reply_side_effects_task.delay")
