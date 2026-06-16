@@ -148,6 +148,72 @@ class ChatEndpointCoverageTest(TestCase):
             ["Target email must be different from requester email."],
         )
 
+    def test_requests_patch_with_is_read_toggles_initial_request_message_for_receiver(self):
+        initial_message = self.request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST)
+
+        mark_read = self.client.patch(
+            f"/api/requests/{self.request.id}/",
+            {"is_read": True},
+            format="json",
+            **self.auth_headers(self.target_token),
+        )
+        self.assertEqual(mark_read.status_code, 200)
+        self.assertEqual(mark_read.data["actor_role"], Message.Actor.TARGET)
+        self.assertEqual(mark_read.data["last_read_message_id"], initial_message.id)
+        self.assertEqual(mark_read.data["unread_count"], 0)
+
+        initial_message.refresh_from_db()
+        self.request.refresh_from_db()
+        self.assertTrue(initial_message.is_read)
+        self.assertIsNotNone(initial_message.read_at)
+        self.assertEqual(self.request.target_last_read_message_id, initial_message.id)
+
+        mark_unread = self.client.patch(
+            f"/api/requests/{self.request.id}/",
+            {"is_read": False},
+            format="json",
+            **self.auth_headers(self.target_token),
+        )
+        self.assertEqual(mark_unread.status_code, 200)
+        self.assertIsNone(mark_unread.data["last_read_message_id"])
+        self.assertEqual(mark_unread.data["unread_count"], 1)
+
+        initial_message.refresh_from_db()
+        self.request.refresh_from_db()
+        self.assertFalse(initial_message.is_read)
+        self.assertIsNone(initial_message.read_at)
+        self.assertIsNone(self.request.target_last_read_message_id)
+
+    def test_requests_patch_with_tracking_code_marks_initial_request_message_read_for_guest_target(self):
+        guest_request = ShyRequest.objects.create(
+            user=self.owner,
+            requester_user=self.owner,
+            requester_name="Requester Name",
+            requester_email=self.owner.email,
+            requester_alias="RequesterAlias",
+            target_name="Guest Target",
+            target_email="guest-target@valid.com",
+            description="Guest target read test",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+        initial_message = guest_request.messages.get(message_kind=Message.Kind.INITIAL_REQUEST)
+
+        response = self.client.patch(
+            f"/api/requests/{guest_request.id}/",
+            {"tracking_code": guest_request.tracking_code, "is_read": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["actor_role"], Message.Actor.TARGET)
+        self.assertEqual(response.data["last_read_message_id"], initial_message.id)
+        self.assertEqual(response.data["unread_count"], 0)
+
+        guest_request.refresh_from_db()
+        initial_message.refresh_from_db()
+        self.assertEqual(guest_request.target_last_read_message_id, initial_message.id)
+        self.assertTrue(initial_message.is_read)
+
     def test_requests_list_marks_received_requests_for_target(self):
         response = self.client.get("/api/requests/", **self.auth_headers(self.target_token))
 

@@ -44,6 +44,7 @@ from .serializers import (
     MessageInputSerializer,
     MessageSerializer,
     RequestBlockSerializer,
+    RequestPatchReadStateSerializer,
     RequestReadStateSerializer,
     ReplyByTrackingSerializer,
     ShyRequestSerializer,
@@ -208,44 +209,109 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
         for target_user_id in get_request_inbox_user_ids(shy_request):
             send_received_request_inbox_websocket(target_user_id)
 
+    def _read_state_payload(self, shy_request, viewer_role, *, updated):
+        shy_request.refresh_from_db(fields=[
+            "requester_last_read_message",
+            "requester_last_read_at",
+            "target_last_read_message",
+            "target_last_read_at",
+        ])
+        return {
+            "updated": updated,
+            "request_id": shy_request.id,
+            "actor_role": viewer_role,
+            "last_read_message_id": shy_request.get_last_read_message_id_for_actor(viewer_role),
+            "unread_count": unread_message_count_for_request(shy_request, viewer_role),
+            **build_request_read_state(shy_request),
+        }
+
     def _update_message_read_state_response(self, request, shy_request, message_id, *, is_read, tracking_code=""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         message = get_object_or_404(Message.objects.with_related(), pk=message_id, request=shy_request)
-        if not message.is_visible_to(viewer_role):
+        if not message.is_visible_to(viewer_role) or message.recipient != viewer_role:
             return Response(
-                {"detail": "You can only update read state for messages in your conversation view."},
+                {"detail": "You can only update read state for messages addressed to you."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if not is_read:
-            return Response(
-                {"detail": "Per-message unread rollbacks are deprecated. Use participant-level read state."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
-        read_state = mark_request_read_state(
-            shy_request,
-            viewer_role,
-            last_read_message_id=message.id,
+        updated = message.set_read_state_for_actor(viewer_role, is_read=is_read)
+        payload = self._read_state_payload(shy_request, viewer_role, updated=updated)
+        payload.update(
+            {
+                "message_id": message.id,
+                "is_read": is_read,
+            }
         )
-        if read_state["updated"]:
+        if updated:
             self._refresh_request_inbox(shy_request)
-            broadcast_chat_read_state(read_state)
-        return Response(read_state, status=status.HTTP_200_OK)
+            broadcast_chat_read_state(payload)
+        return Response(payload, status=status.HTTP_200_OK)
 
-    def _update_request_read_state_response(self, request, shy_request, *, last_read_message_id=None, tracking_code=""):
+    def _update_request_read_state_response(self, request, shy_request, *, last_read_message_id=None, is_read=True, tracking_code=""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
-        try:
-            read_state = mark_request_read_state(
-                shy_request,
-                viewer_role,
-                last_read_message_id=last_read_message_id,
+        if not viewer_role:
+            return Response(
+                {"detail": "You are not allowed to update read state for this request."},
+                status=status.HTTP_403_FORBIDDEN,
             )
+
+        try:
+            if is_read:
+                read_state = mark_request_read_state(
+                    shy_request,
+                    viewer_role,
+                    last_read_message_id=last_read_message_id,
+                )
+            else:
+                if last_read_message_id is not None:
+                    message = get_object_or_404(
+                        Message.objects.with_related(),
+                        pk=last_read_message_id,
+                        request=shy_request,
+                    )
+                    updated = message.set_read_state_for_actor(viewer_role, is_read=False)
+                else:
+                    updated = shy_request.set_last_read_message_for_actor(
+                        viewer_role,
+                        None,
+                        allow_backwards=True,
+                    )
+                read_state = self._read_state_payload(shy_request, viewer_role, updated=updated)
         except Message.DoesNotExist:
             return Response({"detail": "Message not found in this conversation."}, status=status.HTTP_404_NOT_FOUND)
         if read_state["updated"]:
             self._refresh_request_inbox(shy_request)
             broadcast_chat_read_state(read_state)
         return Response(read_state, status=status.HTTP_200_OK)
+
+    def partial_update(self, request, *args, **kwargs):
+        if any(key in request.data for key in ("is_read", "message_id", "last_read_message_id")):
+            payload = RequestPatchReadStateSerializer(data=request.data or {})
+            payload.is_valid(raise_exception=True)
+
+            try:
+                shy_request, tracking_code = self._get_conversation_request(request, kwargs.get("pk"))
+            except MessageAccessError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+            message_id = payload.validated_data.get("message_id")
+            if message_id is not None:
+                return self._update_message_read_state_response(
+                    request,
+                    shy_request,
+                    message_id,
+                    is_read=payload.validated_data["is_read"],
+                    tracking_code=tracking_code,
+                )
+            return self._update_request_read_state_response(
+                request,
+                shy_request,
+                last_read_message_id=payload.validated_data.get("last_read_message_id"),
+                is_read=payload.validated_data["is_read"],
+                tracking_code=tracking_code,
+            )
+
+        return super().partial_update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
@@ -431,6 +497,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             request,
             shy_request,
             last_read_message_id=payload.validated_data.get("last_read_message_id"),
+            is_read=True,
             tracking_code=tracking_code,
         )
 

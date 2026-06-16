@@ -550,6 +550,29 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
             return None
         return getattr(self, f"{message_field}_id", None)
 
+    def _sync_message_read_flags_for_actor(self, actor_role: str | None):
+        if actor_role not in {Message.Actor.REQUESTER, Message.Actor.TARGET}:
+            return
+
+        queryset = Message.all_objects.filter(
+            request=self,
+            recipient=actor_role,
+            is_deleted=False,
+        )
+        last_read_message_id = self.get_last_read_message_id_for_actor(actor_role)
+        if last_read_message_id:
+            queryset.filter(id__lte=last_read_message_id, is_read=False).update(
+                is_read=True,
+                read_at=timezone.now(),
+            )
+            queryset.filter(id__gt=last_read_message_id, is_read=True).update(
+                is_read=False,
+                read_at=None,
+            )
+            return
+
+        queryset.filter(is_read=True).update(is_read=False, read_at=None)
+
     def set_last_read_message_for_actor(
         self,
         actor_role: str | None,
@@ -576,6 +599,7 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
         setattr(self, timestamp_field, timezone.now() if message is not None else None)
         if save:
             self.save(update_fields=[message_field, timestamp_field, "updated_at"])
+        self._sync_message_read_flags_for_actor(actor_role)
         return True
 
     def unread_messages_for_actor(self, actor_role: str | None):
