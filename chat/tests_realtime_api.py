@@ -222,6 +222,10 @@ class RealtimeAPITest(TestCase):
             snapshot["recent_requests"][0]["latest_message"]["clean_body"],
             "Most recent requester message",
         )
+        self.assertEqual(
+            snapshot["recent_requests"][0]["last_message"]["id"],
+            snapshot["recent_requests"][0]["latest_message"]["id"],
+        )
         request_ids = [item["id"] for item in snapshot["recent_requests"]]
         self.assertIn(cancelled_request.id, request_ids)
         self.assertIn(blocked_request.id, request_ids)

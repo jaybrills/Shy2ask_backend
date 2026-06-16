@@ -244,6 +244,7 @@ def build_request_inbox_snapshot(user, *, limit: int = 20):
                 "created_at": request.created_at.isoformat() if request.created_at else None,
                 "updated_at": request.updated_at.isoformat() if request.updated_at else None,
                 "latest_message": latest_message,
+                "last_message": latest_message,
             }
         )
 

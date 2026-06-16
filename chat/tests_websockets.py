@@ -198,6 +198,11 @@ class WebsocketConsumerTests(TransactionTestCase):
                 self.assertEqual(snapshot["recent_requests"][0]["id"], self.shy_request.id)
                 self.assertEqual(snapshot["recent_requests"][0]["direction"], "received")
                 self.assertEqual(snapshot["recent_requests"][0]["unread_count"], 1)
+                self.assertIsNotNone(snapshot["recent_requests"][0]["latest_message"])
+                self.assertEqual(
+                    snapshot["recent_requests"][0]["last_message"]["id"],
+                    snapshot["recent_requests"][0]["latest_message"]["id"],
+                )
 
                 await sync_to_async(send_received_request_inbox_websocket)(self.target.id)
                 updated = await communicator.receive_json_from(timeout=5)
