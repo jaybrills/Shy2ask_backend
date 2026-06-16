@@ -303,6 +303,17 @@ class ShyRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(detail) from exc
         return shy_request
 
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        try:
+            instance.save()
+        except DjangoValidationError as exc:
+            detail = getattr(exc, "message_dict", None) or getattr(exc, "messages", None) or {"detail": ["Invalid request."]}
+            raise serializers.ValidationError(detail) from exc
+        return instance
+
 
 class MessageInputSerializer(serializers.Serializer):
     body = serializers.CharField()

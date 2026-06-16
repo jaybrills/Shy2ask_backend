@@ -120,6 +120,34 @@ class ChatEndpointCoverageTest(TestCase):
             ["Target email must be different from requester email."],
         )
 
+    def test_requests_patch_rejects_same_target_email_as_requester_with_400(self):
+        unregistered_target_request = ShyRequest.objects.create(
+            user=self.owner,
+            requester_user=self.owner,
+            requester_name="Requester Name",
+            requester_email=self.owner.email,
+            requester_alias="RequesterAlias",
+            target_name="Unregistered Target",
+            target_email="third@valid.com",
+            description="Needs update validation",
+            status=ShyRequest.Status.SUBMITTED,
+        )
+
+        response = self.client.patch(
+            f"/api/requests/{unregistered_target_request.id}/",
+            {
+                "target_email": self.owner.email,
+            },
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["target_email"],
+            ["Target email must be different from requester email."],
+        )
+
     def test_requests_list_marks_received_requests_for_target(self):
         response = self.client.get("/api/requests/", **self.auth_headers(self.target_token))
 
