@@ -479,8 +479,8 @@ class ChatEndpointCoverageTest(TestCase):
         initial_message.refresh_from_db()
         self.assertTrue(initial_message.is_read)
 
-        mark_unread = self.client.post(
-            f"/api/requests/{self.request.id}/messages/{initial_message.id}/read-state/",
+        mark_unread = self.client.patch(
+            f"/api/requests/{self.request.id}/messages/{initial_message.id}/",
             {"tracking_code": self.request.tracking_code, "is_read": False},
             format="json",
         )
@@ -493,8 +493,8 @@ class ChatEndpointCoverageTest(TestCase):
         self.assertFalse(initial_message.is_read)
         self.assertIsNone(initial_message.read_at)
 
-        mark_read = self.client.post(
-            f"/api/requests/{self.request.id}/messages/{initial_message.id}/read-state/",
+        mark_read = self.client.patch(
+            f"/api/requests/{self.request.id}/messages/{initial_message.id}/",
             {"tracking_code": self.request.tracking_code, "is_read": True},
             format="json",
         )
@@ -556,8 +556,8 @@ class ChatEndpointCoverageTest(TestCase):
         )
         self.assertEqual(owner_reply.status_code, 201)
 
-        response = self.client.post(
-            f"/api/requests/{self.request.id}/messages/{owner_reply.data['id']}/read-state/",
+        response = self.client.patch(
+            f"/api/requests/{self.request.id}/messages/{owner_reply.data['id']}/",
             {"is_read": True},
             format="json",
             **self.auth_headers(self.owner_token),
