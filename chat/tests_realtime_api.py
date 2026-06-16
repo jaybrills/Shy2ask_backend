@@ -96,6 +96,54 @@ class RealtimeAPITest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_mark_read_endpoint_updates_participant_cursor(self):
+        requester = User.objects.create_user(
+            email="requester-read@shy2ask.com",
+            password="password123",
+            is_email_verified=True,
+            is_phone_verified=True,
+        )
+        req = ShyRequest.objects.create(
+            user=requester,
+            requester_user=requester,
+            requester_name="Reader",
+            requester_email=requester.email,
+            target_user=self.user,
+            target_name="Target Reader",
+            target_email=self.user.email,
+            description="Read state request",
+        )
+        first_reply = create_message_for_request(
+            req,
+            "First unread",
+            user=requester,
+            run_async_business_logic=False,
+        )
+        second_reply = create_message_for_request(
+            req,
+            "Second unread",
+            user=requester,
+            run_async_business_logic=False,
+        )
+
+        response = self.client.patch(
+            f"/api/requests/{req.id}/read/",
+            data=json.dumps({"last_read_message_id": first_reply.id}),
+            content_type="application/json",
+            **self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["actor_role"], Message.Actor.TARGET)
+        self.assertEqual(payload["last_read_message_id"], first_reply.id)
+        self.assertEqual(payload["unread_count"], 1)
+        self.assertEqual(payload["target_last_read_message_id"], first_reply.id)
+
+        req.refresh_from_db()
+        self.assertEqual(req.target_last_read_message_id, first_reply.id)
+        self.assertEqual(req.unread_messages_for_actor(Message.Actor.TARGET).count(), 1)
+        self.assertEqual(req.unread_messages_for_actor(Message.Actor.TARGET).first().id, second_reply.id)
+
     def test_realtime_docs_are_available_for_swagger(self):
         response = self.client.get("/api/realtime/docs/")
         self.assertEqual(response.status_code, 200)

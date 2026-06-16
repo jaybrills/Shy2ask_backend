@@ -9,8 +9,12 @@ from rest_framework.authtoken.models import Token
 from .message_service import create_message_for_request
 from .models import Message, ShyRequest, Notification
 from .websocket_utils import (
+    build_request_read_state,
     build_request_inbox_snapshot,
     decorate_message_for_viewer,
+    get_request_inbox_user_ids,
+    mark_request_read_state,
+    send_chat_read_state_websocket,
     send_received_request_inbox_websocket,
     serialize_message_for_websocket,
     unread_message_count_for_request,
@@ -103,6 +107,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
             if message_type == "ping":
                 await self.send_json_event({"type": "pong"})
                 return
+            if message_type in {"chat.read", "chat_read"}:
+                read_state = await self.mark_read(data.get("last_read_message_id"))
+                if read_state is None:
+                    await self.send_error("Unable to update read state.")
+                    return
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        "type": "chat_read_state",
+                        "read": read_state,
+                    }
+                )
+                return
 
             if "body" in data:
                 body = str(data["body"]).strip()
@@ -151,6 +168,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Send HTML message with hx-swap-oob for HTMX
         await self.send(text_data=html_message)
 
+    async def chat_read_state(self, event):
+        if self.response_format != "json":
+            return
+        read_state = dict(event["read"])
+        viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
+        read_state["is_me"] = read_state.get("actor_role") == viewer_role
+        await self.send_json_event({"type": "chat.read", "read": read_state})
+
     async def send_recent_messages(self):
         """Send recent messages to the client."""
         messages = await self.get_recent_messages()
@@ -158,7 +183,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             request_data = await self.get_request_summary()
             await self.send_json_event({
                 "type": "chat.history",
-                "request": request_data,
+                "request": {key: value for key, value in request_data.items() if key != "read_state"},
+                "read_state": request_data.get("read_state"),
                 "viewer": {
                     "role": Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER,
                     "label": "Target" if self.is_target else "Requester",
@@ -194,9 +220,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             request = ShyRequest.objects.get(pk=self.request_id)
             viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
-            updated_count = Message.objects.filter(request=request).mark_read_for_actor(viewer_role)
-            if updated_count and getattr(self.user, "is_authenticated", False):
-                send_received_request_inbox_websocket(self.user.id)
+            read_state = mark_request_read_state(request, viewer_role)
+            if read_state["updated"]:
+                for user_id in get_request_inbox_user_ids(request):
+                    send_received_request_inbox_websocket(user_id)
             messages = Message.objects.filter(request=request).visible_to(viewer_role).select_related(
                 "author",
                 "request",
@@ -247,6 +274,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "service_channel": request.service_channel,
             "description": request.description,
             "created_at": request.created_at.isoformat(),
+            "read_state": build_request_read_state(request),
             "requester": {
                 "role": Message.Actor.REQUESTER,
                 "label": "Requester",
@@ -262,6 +290,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "is_me": self.is_target,
             },
         }
+
+    @database_sync_to_async
+    def mark_read(self, last_read_message_id=None):
+        try:
+            request = ShyRequest.objects.get(pk=self.request_id)
+            viewer_role = Message.Actor.TARGET if self.is_target else Message.Actor.REQUESTER
+            read_state = mark_request_read_state(
+                request,
+                viewer_role,
+                last_read_message_id=last_read_message_id,
+            )
+            if read_state["updated"]:
+                for user_id in get_request_inbox_user_ids(request):
+                    send_received_request_inbox_websocket(user_id)
+            return read_state
+        except Exception as e:
+            print(f"Error updating read state: {e}")
+            return None
 
     def get_query_params(self):
         query_string = self.scope.get("query_string", b"").decode()

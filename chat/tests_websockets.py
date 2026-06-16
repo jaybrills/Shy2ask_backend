@@ -92,6 +92,41 @@ class WebsocketConsumerTests(TransactionTestCase):
             ).exists()
         )
 
+    def test_chat_websocket_can_broadcast_participant_read_cursor_updates(self):
+        async def scenario():
+            requester_ws = await self._connect(f"/ws/chat/{self.shy_request.id}/?format=json&token={self.requester_token.key}")
+            target_ws = await self._connect(
+                f"/ws/chat/{self.shy_request.id}/?format=json&tracking_code={self.shy_request.tracking_code}"
+            )
+            try:
+                requester_history = await requester_ws.receive_json_from(timeout=5)
+                target_history = await target_ws.receive_json_from(timeout=5)
+                self.assertEqual(requester_history["type"], "chat.history")
+                self.assertEqual(target_history["type"], "chat.history")
+
+                latest_message_id = target_history["messages"][-1]["id"]
+                await target_ws.send_json_to(
+                    {
+                        "type": "chat.read",
+                        "last_read_message_id": latest_message_id,
+                    }
+                )
+
+                requester_event = await requester_ws.receive_json_from(timeout=5)
+                target_event = await target_ws.receive_json_from(timeout=5)
+                events = sorted([requester_event, target_event], key=lambda item: item["read"]["is_me"])
+                self.assertEqual(events[0]["type"], "chat.read")
+                self.assertEqual(events[1]["type"], "chat.read")
+                self.assertEqual(events[0]["read"]["actor_role"], Message.Actor.TARGET)
+                self.assertEqual(events[0]["read"]["last_read_message_id"], latest_message_id)
+                self.assertFalse(events[0]["read"]["is_me"])
+                self.assertTrue(events[1]["read"]["is_me"])
+            finally:
+                await requester_ws.disconnect()
+                await target_ws.disconnect()
+
+        async_to_sync(scenario)()
+
     def test_notification_websocket_uses_notification_recipient_for_initial_and_live_events(self):
         owner_notification = Notification.objects.create(
             recipient_user=self.requester,

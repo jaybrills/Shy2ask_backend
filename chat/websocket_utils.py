@@ -88,12 +88,58 @@ def decorate_message_for_viewer(message, viewer_role: str | None):
     return message
 
 
-def unread_message_count_for_request(shy_request, viewer_role: str | None) -> int:
-    from .models import Message
+def build_request_read_state(shy_request):
+    return {
+        "requester_last_read_message_id": shy_request.requester_last_read_message_id,
+        "requester_last_read_at": shy_request.requester_last_read_at.isoformat() if shy_request.requester_last_read_at else None,
+        "target_last_read_message_id": shy_request.target_last_read_message_id,
+        "target_last_read_at": shy_request.target_last_read_at.isoformat() if shy_request.target_last_read_at else None,
+    }
 
+
+def unread_message_count_for_request(shy_request, viewer_role: str | None) -> int:
     if not viewer_role:
         return 0
-    return Message.objects.for_request(shy_request).unread_for_actor(viewer_role).count()
+    return shy_request.unread_messages_for_actor(viewer_role).count()
+
+
+def mark_request_read_state(shy_request, viewer_role: str | None, *, last_read_message_id: int | None = None):
+    from .models import Message
+
+    if viewer_role not in {"requester", "target"}:
+        return {
+            "updated": False,
+            "request_id": shy_request.id,
+            "actor_role": viewer_role,
+            "last_read_message_id": None,
+            "unread_count": 0,
+            **build_request_read_state(shy_request),
+        }
+
+    message_queryset = Message.objects.for_request(shy_request).visible_to(viewer_role)
+    if last_read_message_id is None:
+        target_message = message_queryset.order_by("-id").first()
+    else:
+        target_message = message_queryset.filter(id=last_read_message_id).first()
+        if target_message is None:
+            raise Message.DoesNotExist("Message not found in this request.")
+
+    updated = shy_request.set_last_read_message_for_actor(viewer_role, target_message)
+    shy_request.refresh_from_db(fields=[
+        "requester_last_read_message",
+        "requester_last_read_at",
+        "target_last_read_message",
+        "target_last_read_at",
+    ])
+    return {
+        "updated": updated,
+        "request_id": shy_request.id,
+        "actor_role": viewer_role,
+        "actor_label": actor_label(viewer_role),
+        "last_read_message_id": shy_request.get_last_read_message_id_for_actor(viewer_role),
+        "unread_count": unread_message_count_for_request(shy_request, viewer_role),
+        **build_request_read_state(shy_request),
+    }
 
 
 def build_request_inbox_snapshot(user, *, limit: int = 20):
@@ -320,5 +366,26 @@ def send_chat_message_websocket(request_id, message_data):
             print(f"⚠ Channel layer not available for request {request_id}")
     except Exception as e:
         print(f"✗ Error sending WebSocket chat message for request {request_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def send_chat_read_state_websocket(request_id, read_state_data):
+    """Broadcast participant-level read cursor updates to connected chat clients."""
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                f"chat_{request_id}",
+                {
+                    "type": "chat_read_state",
+                    "read": read_state_data,
+                }
+            )
+            print(f"✓ WebSocket chat read state queued for request {request_id}")
+        else:
+            print(f"⚠ Channel layer not available for request {request_id}")
+    except Exception as e:
+        print(f"✗ Error sending WebSocket chat read state for request {request_id}: {e}")
         import traceback
         traceback.print_exc()

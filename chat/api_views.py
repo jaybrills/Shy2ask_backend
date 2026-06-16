@@ -21,7 +21,10 @@ from .message_service import (
     create_message_for_request,
 )
 from .websocket_utils import (
+    build_request_read_state,
     get_request_inbox_user_ids,
+    mark_request_read_state,
+    send_chat_read_state_websocket,
     send_chat_message_websocket,
     send_received_request_inbox_websocket,
     serialize_message_for_websocket,
@@ -41,6 +44,7 @@ from .serializers import (
     MessageInputSerializer,
     MessageSerializer,
     RequestBlockSerializer,
+    RequestReadStateSerializer,
     ReplyByTrackingSerializer,
     ShyRequestSerializer,
     SubscriptionCreateSerializer,
@@ -56,6 +60,10 @@ logger = logging.getLogger(__name__)
 def broadcast_chat_message(message):
     """Publish REST-created messages to connected chat WebSocket clients."""
     send_chat_message_websocket(message.request_id, serialize_message_for_websocket(message))
+
+
+def broadcast_chat_read_state(read_state):
+    send_chat_read_state_websocket(read_state["request_id"], read_state)
 
 
 class ShyRequestViewSet(viewsets.ModelViewSet):
@@ -154,6 +162,7 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
                 "description": shy_request.description,
                 "created_at": shy_request.created_at,
             },
+            "read_state": build_request_read_state(shy_request),
             "viewer": {
                 "role": viewer_role,
                 "label": "Requester" if viewer_role == Message.Actor.REQUESTER else "Target" if viewer_role == Message.Actor.TARGET else "Guest",
@@ -188,13 +197,12 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def _mark_conversation_read(self, request, shy_request, tracking_code: str = ""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         if not viewer_role:
-            return 0
-
-        updated_count = Message.objects.for_request(shy_request).mark_read_for_actor(viewer_role)
-        if updated_count:
-            for target_user_id in get_request_inbox_user_ids(shy_request):
-                send_received_request_inbox_websocket(target_user_id)
-        return updated_count
+            return {"updated": False, "request_id": shy_request.id, "actor_role": viewer_role}
+        read_state = mark_request_read_state(shy_request, viewer_role)
+        if read_state["updated"]:
+            self._refresh_request_inbox(shy_request)
+            broadcast_chat_read_state(read_state)
+        return read_state
 
     def _refresh_request_inbox(self, shy_request):
         for target_user_id in get_request_inbox_user_ids(shy_request):
@@ -203,23 +211,41 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
     def _update_message_read_state_response(self, request, shy_request, message_id, *, is_read, tracking_code=""):
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
         message = get_object_or_404(Message.objects.with_related(), pk=message_id, request=shy_request)
-        updated = message.set_read_state_for_actor(viewer_role, is_read=is_read)
-        if not updated:
+        if not message.is_visible_to(viewer_role):
             return Response(
-                {"detail": "You can only update read state for messages addressed to you."},
+                {"detail": "You can only update read state for messages in your conversation view."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if not is_read:
+            return Response(
+                {"detail": "Per-message unread rollbacks are deprecated. Use participant-level read state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        self._refresh_request_inbox(shy_request)
-        return Response(
-            {
-                "request_id": shy_request.id,
-                "message_id": message.id,
-                "is_read": message.is_read,
-                "unread_count": unread_message_count_for_request(shy_request, viewer_role),
-            },
-            status=status.HTTP_200_OK,
+        read_state = mark_request_read_state(
+            shy_request,
+            viewer_role,
+            last_read_message_id=message.id,
         )
+        if read_state["updated"]:
+            self._refresh_request_inbox(shy_request)
+            broadcast_chat_read_state(read_state)
+        return Response(read_state, status=status.HTTP_200_OK)
+
+    def _update_request_read_state_response(self, request, shy_request, *, last_read_message_id=None, tracking_code=""):
+        viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
+        try:
+            read_state = mark_request_read_state(
+                shy_request,
+                viewer_role,
+                last_read_message_id=last_read_message_id,
+            )
+        except Message.DoesNotExist:
+            return Response({"detail": "Message not found in this conversation."}, status=status.HTTP_404_NOT_FOUND)
+        if read_state["updated"]:
+            self._refresh_request_inbox(shy_request)
+            broadcast_chat_read_state(read_state)
+        return Response(read_state, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.AllowAny])
     def messages(self, request, pk=None):
@@ -364,23 +390,58 @@ class ShyRequestViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
         viewer_role = self._viewer_role(request, shy_request, tracking_code=tracking_code)
-        updated_count = Message.objects.for_request(shy_request).filter(
-            id__in=payload.validated_data["ids"],
-        ).set_read_state_for_actor(
-            viewer_role,
-            is_read=payload.validated_data["is_read"],
+        if not payload.validated_data["is_read"]:
+            return Response(
+                {"detail": "Bulk unread rollbacks are deprecated. Use participant-level read state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        latest_message = (
+            Message.objects.for_request(shy_request)
+            .visible_to(viewer_role)
+            .filter(id__in=payload.validated_data["ids"])
+            .order_by("-id")
+            .first()
+        )
+        if not latest_message:
+            return Response({"detail": "No visible messages matched the requested ids."}, status=status.HTTP_404_NOT_FOUND)
+        return self._update_request_read_state_response(
+            request,
+            shy_request,
+            last_read_message_id=latest_message.id,
+            tracking_code=tracking_code,
         )
 
-        self._refresh_request_inbox(shy_request)
-        return Response(
-            {
-                "request_id": shy_request.id,
-                "updated_count": updated_count,
-                "is_read": payload.validated_data["is_read"],
-                "unread_count": unread_message_count_for_request(shy_request, viewer_role),
-            },
-            status=status.HTTP_200_OK,
+    @action(
+        detail=True,
+        methods=["patch", "post"],
+        permission_classes=[permissions.AllowAny],
+        url_path="read",
+    )
+    def mark_read(self, request, pk=None):
+        payload = RequestReadStateSerializer(data=request.data or {})
+        payload.is_valid(raise_exception=True)
+
+        try:
+            shy_request, tracking_code = self._get_conversation_request(request, pk)
+        except MessageAccessError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        return self._update_request_read_state_response(
+            request,
+            shy_request,
+            last_read_message_id=payload.validated_data.get("last_read_message_id"),
+            tracking_code=tracking_code,
         )
+
+    @action(
+        detail=True,
+        methods=["patch", "post"],
+        permission_classes=[permissions.AllowAny],
+        url_path="messages/read",
+    )
+    def mark_messages_read(self, request, pk=None):
+        return self.mark_read(request, pk=pk)
 
     @action(detail=True, methods=["post"], permission_classes=[IsVerified])
     def block(self, request, pk=None):
@@ -762,6 +823,10 @@ class RealtimeDocumentationView(APIView):
                     "history_event": {
                         "type": "chat.history",
                         "request": {"id": 123, "tracking_code": "ABC123", "status": "ongoing", "unread_count": 0},
+                        "read_state": {
+                            "requester_last_read_message_id": 455,
+                            "target_last_read_message_id": 456,
+                        },
                         "viewer": {"role": "requester", "label": "Requester"},
                         "messages": [],
                     },
@@ -778,6 +843,21 @@ class RealtimeDocumentationView(APIView):
                             "direction": "outbound",
                             "is_mine": True,
                             "created_at": "2026-04-22T10:00:00+00:00",
+                        },
+                    },
+                    "send_read_event": {
+                        "type": "chat.read",
+                        "last_read_message_id": 456,
+                    },
+                    "read_event": {
+                        "type": "chat.read",
+                        "read": {
+                            "request_id": 123,
+                            "actor_role": "target",
+                            "last_read_message_id": 456,
+                            "requester_last_read_message_id": 455,
+                            "target_last_read_message_id": 456,
+                            "unread_count": 0,
                         },
                     },
                 },
@@ -843,6 +923,7 @@ class RealtimeDocumentationView(APIView):
                 "notes": [
                     "Use ws:// for HTTP and wss:// for HTTPS.",
                     "REST-created messages are broadcast to connected chat clients.",
+                    "Use PATCH /api/requests/{id}/read/ or send chat.read over the chat socket to advance participant read state.",
                     "The default chat socket response is HTML for the existing HTMX page; pass ?format=json for API/mobile clients.",
                     "The request inbox socket is role-aware and can be used for both requester and target dashboards.",
                 ],

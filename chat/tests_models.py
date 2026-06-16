@@ -1,5 +1,6 @@
 import os
 import tempfile
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.test import override_settings
 from decimal import Decimal
@@ -71,6 +72,16 @@ class ChatModelTest(TestCase):
         self.assertEqual(shy_request.target_user, target)
         self.assertEqual(shy_request.target_name, "Target Alias")
 
+    def test_request_rejects_same_requester_and_target_email(self):
+        with self.assertRaises(ValidationError) as exc:
+            ShyRequest.objects.create(
+                requester_user=self.user,
+                target_email=self.user.email,
+                description="Invalid self-targeted request",
+            )
+
+        self.assertIn("Target email must be different from requester email.", exc.exception.message_dict["target_email"])
+
     def test_proxy_models_use_custom_querysets(self):
         open_request = ShyRequest.objects.create(
             requester_name="Requester 2",
@@ -116,7 +127,7 @@ class ChatModelTest(TestCase):
         self.request.refresh_from_db()
         self.assertEqual(self.request.status, ShyRequest.Status.ONGOING)
 
-    def test_mark_read_for_actor_updates_only_recipient_messages(self):
+    def test_mark_read_for_actor_advances_request_read_cursor(self):
         inbound = Message.objects.create(
             request=self.request,
             sender=Message.Actor.REQUESTER,
@@ -132,12 +143,10 @@ class ChatModelTest(TestCase):
 
         updated_count = Message.objects.for_request(self.request).mark_read_for_actor(Message.Actor.TARGET)
 
-        inbound.refresh_from_db()
-        outbound.refresh_from_db()
         self.assertEqual(updated_count, 2)
-        self.assertTrue(inbound.is_read)
-        self.assertIsNotNone(inbound.read_at)
-        self.assertFalse(outbound.is_read)
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.target_last_read_message_id, outbound.id)
+        self.assertEqual(self.request.unread_messages_for_actor(Message.Actor.TARGET).count(), 0)
 
     def test_default_email_context_uses_static_logo(self):
         context = build_email_context(site_url="https://backend.shy2ask.com")

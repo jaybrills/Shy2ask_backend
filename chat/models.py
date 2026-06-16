@@ -246,7 +246,23 @@ class MessageQuerySet(SoftDeleteQuerySet):
     def unread_for_actor(self, actor_role: str | None):
         if not actor_role:
             return self.none()
-        return self.visible_to(actor_role).filter(recipient=actor_role, is_read=False)
+        request_ids = list(self.values_list("request_id", flat=True).distinct())
+        if not request_ids:
+            return self.none()
+
+        queryset = self.visible_to(actor_role).filter(recipient=actor_role)
+        clauses = models.Q()
+        for shy_request in ShyRequest.objects.filter(pk__in=request_ids).only(
+            "id",
+            "requester_last_read_message_id",
+            "target_last_read_message_id",
+        ):
+            clause = models.Q(request_id=shy_request.id)
+            last_read_message_id = shy_request.get_last_read_message_id_for_actor(actor_role)
+            if last_read_message_id:
+                clause &= models.Q(id__gt=last_read_message_id)
+            clauses |= clause
+        return queryset.filter(clauses) if clauses else queryset
 
     def mark_read_for_actor(self, actor_role: str | None):
         return self.set_read_state_for_actor(actor_role, is_read=True)
@@ -254,11 +270,51 @@ class MessageQuerySet(SoftDeleteQuerySet):
     def set_read_state_for_actor(self, actor_role: str | None, *, is_read: bool):
         if not actor_role:
             return 0
+        request_ids = list(self.values_list("request_id", flat=True).distinct())
+        if not request_ids:
+            return 0
 
-        queryset = self.visible_to(actor_role).filter(recipient=actor_role)
-        if is_read:
-            return queryset.filter(is_read=False).update(is_read=True, read_at=timezone.now())
-        return queryset.filter(is_read=True).update(is_read=False, read_at=None)
+        updated_count = 0
+        visible_queryset = self.visible_to(actor_role)
+        for shy_request in ShyRequest.objects.filter(pk__in=request_ids):
+            request_queryset = visible_queryset.filter(request=shy_request)
+            current_last_read_message_id = shy_request.get_last_read_message_id_for_actor(actor_role)
+
+            if is_read:
+                next_message = request_queryset.order_by("-id").first()
+                if not next_message:
+                    continue
+                count_queryset = request_queryset.filter(recipient=actor_role, id__lte=next_message.id)
+                if current_last_read_message_id:
+                    count_queryset = count_queryset.filter(id__gt=current_last_read_message_id)
+                updated_count += count_queryset.count()
+                shy_request.set_last_read_message_for_actor(actor_role, next_message)
+                continue
+
+            if current_last_read_message_id is None:
+                continue
+            earliest_message = request_queryset.order_by("id").first()
+            if not earliest_message:
+                continue
+            previous_message = (
+                Message.objects.for_request(shy_request)
+                .visible_to(actor_role)
+                .filter(id__lt=earliest_message.id)
+                .order_by("-id")
+                .first()
+            )
+            lower_bound = previous_message.id if previous_message else 0
+            updated_count += request_queryset.filter(
+                recipient=actor_role,
+                id__gt=lower_bound,
+                id__lte=current_last_read_message_id,
+            ).count()
+            shy_request.set_last_read_message_for_actor(
+                actor_role,
+                previous_message,
+                allow_backwards=True,
+            )
+        return updated_count
 
     def soft_delete_for_actor(self, actor_role: str | None):
         if not actor_role:
@@ -395,6 +451,22 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
     target_email = models.EmailField(blank=True)
     target_phone = models.CharField(max_length=50, blank=True)
     target_address = models.CharField(max_length=255, blank=True)
+    requester_last_read_message = models.ForeignKey(
+        "Message",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    requester_last_read_at = models.DateTimeField(null=True, blank=True)
+    target_last_read_message = models.ForeignKey(
+        "Message",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    target_last_read_at = models.DateTimeField(null=True, blank=True)
 
     description = models.TextField()
     service_channel = models.CharField(
@@ -465,6 +537,57 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
     def target_display_name(self) -> str:
         return self.target_name or user_display_name_for(self.target_user) or "Target"
 
+    def _read_state_field_names(self, actor_role: str | None):
+        if actor_role == Message.Actor.REQUESTER:
+            return "requester_last_read_message", "requester_last_read_at"
+        if actor_role == Message.Actor.TARGET:
+            return "target_last_read_message", "target_last_read_at"
+        return None, None
+
+    def get_last_read_message_id_for_actor(self, actor_role: str | None) -> int | None:
+        message_field, _ = self._read_state_field_names(actor_role)
+        if not message_field:
+            return None
+        return getattr(self, f"{message_field}_id", None)
+
+    def set_last_read_message_for_actor(
+        self,
+        actor_role: str | None,
+        message=None,
+        *,
+        save: bool = True,
+        allow_backwards: bool = False,
+    ) -> bool:
+        message_field, timestamp_field = self._read_state_field_names(actor_role)
+        if not message_field:
+            return False
+        if message is not None and message.request_id != self.id:
+            raise ValidationError("Read cursor must point to a message in the same request.")
+
+        current_message_id = self.get_last_read_message_id_for_actor(actor_role)
+        next_message_id = getattr(message, "id", None)
+        if next_message_id is not None and current_message_id is not None:
+            if not allow_backwards and next_message_id < current_message_id:
+                return False
+        if current_message_id == next_message_id:
+            return False
+
+        setattr(self, message_field, message)
+        setattr(self, timestamp_field, timezone.now() if message is not None else None)
+        if save:
+            self.save(update_fields=[message_field, timestamp_field, "updated_at"])
+        return True
+
+    def unread_messages_for_actor(self, actor_role: str | None):
+        if actor_role not in {Message.Actor.REQUESTER, Message.Actor.TARGET}:
+            return Message.objects.none()
+
+        queryset = Message.objects.for_request(self).visible_to(actor_role).filter(recipient=actor_role)
+        last_read_message_id = self.get_last_read_message_id_for_actor(actor_role)
+        if last_read_message_id:
+            queryset = queryset.filter(id__gt=last_read_message_id)
+        return queryset
+
     def _generate_unique_tracking_code(self) -> str:
         while True:
             tracking_code = generate_tracking_code()
@@ -496,6 +619,13 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
             self.requester_name = self.requester_name or user_display_name_for(requester_user)
         if target_user:
             self.target_name = self.target_name or user_display_name_for(target_user)
+
+        requester_email = _normalize_email(self.requester_email)
+        target_email = _normalize_email(self.target_email)
+        if requester_email and target_email and requester_email == target_email:
+            raise ValidationError({"target_email": ["Target email must be different from requester email."]})
+        if requester_user and target_user and requester_user.pk == target_user.pk:
+            raise ValidationError({"target_email": ["Target must be different from requester."]})
 
         if save:
             self.save(
@@ -548,6 +678,7 @@ class ShyRequest(SoftDeleteModel, TimeStampedModel, EmailUserResolutionModel):
             )
             message._skip_censor = True
             message.save()
+        self.set_last_read_message_for_actor(Message.Actor.REQUESTER, message)
         return message
 
     def save(self, *args, **kwargs):
@@ -778,16 +909,24 @@ class Message(SoftDeleteModel, EmailUserResolutionModel, CreatedAtModel):
         return self.soft_delete()
 
     def set_read_state_for_actor(self, actor_role: str | None, *, is_read: bool, save: bool = True):
-        if actor_role != self.recipient or not self.is_visible_to(actor_role):
+        if actor_role not in {self.sender, self.recipient} or not self.is_visible_to(actor_role):
             return False
-        if self.is_read == is_read:
-            return True
+        if is_read:
+            return self.request.set_last_read_message_for_actor(actor_role, self, save=save)
 
-        self.is_read = is_read
-        self.read_at = timezone.now() if is_read else None
-        if save:
-            self.save(update_fields=["is_read", "read_at"])
-        return True
+        previous_message = (
+            Message.objects.for_request(self.request)
+            .visible_to(actor_role)
+            .filter(id__lt=self.id)
+            .order_by("-id")
+            .first()
+        )
+        return self.request.set_last_read_message_for_actor(
+            actor_role,
+            previous_message,
+            save=save,
+            allow_backwards=True,
+        )
 
 
 class Notification(EmailUserResolutionModel, models.Model):

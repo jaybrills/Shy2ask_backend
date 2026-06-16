@@ -79,6 +79,47 @@ class ChatEndpointCoverageTest(TestCase):
         slashless_list = self.client.get("/api/requests", **self.auth_headers(self.owner_token))
         self.assertEqual(slashless_list.status_code, 200)
 
+    def test_requests_create_keeps_target_email_distinct_from_requester(self):
+        response = self.client.post(
+            "/api/requests/",
+            {
+                "requester_name": "Another Requester",
+                "requester_email": self.owner.email,
+                "target_name": "Registered Target",
+                "target_email": self.target.email,
+                "description": "Please contact the registered target",
+            },
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        shy_request = ShyRequest.objects.get(pk=response.data["id"])
+        self.assertEqual(shy_request.requester_email, self.owner.email)
+        self.assertEqual(shy_request.target_email, self.target.email)
+        self.assertNotEqual(shy_request.requester_email, shy_request.target_email)
+        self.assertEqual(shy_request.target_user, self.target)
+
+    def test_requests_create_rejects_same_target_email_as_requester(self):
+        response = self.client.post(
+            "/api/requests/",
+            {
+                "requester_name": "Another Requester",
+                "requester_email": self.owner.email,
+                "target_name": "Registered Target",
+                "target_email": self.owner.email,
+                "description": "This should be rejected",
+            },
+            format="json",
+            **self.auth_headers(self.owner_token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["target_email"],
+            ["Target email must be different from requester email."],
+        )
+
     def test_requests_list_marks_received_requests_for_target(self):
         response = self.client.get("/api/requests/", **self.auth_headers(self.target_token))
 

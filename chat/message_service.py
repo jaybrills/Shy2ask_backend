@@ -125,6 +125,7 @@ def create_message_for_request(
     # Enforce censoring at model level; will raise ValidationError if blocked.
     msg.full_clean()
     msg.save()
+    shy_request.set_last_read_message_for_actor(sender, msg)
 
     def refresh_request_inbox():
         try:
