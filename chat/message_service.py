@@ -161,16 +161,6 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
     send_request_reply_emails(shy_request, sender, body)
 
     if sender == Message.Actor.TARGET:
-        # Target replied → notify requester (#10 message_replied)
-        send_notification(
-            subject="New reply from target",
-            body=f"Target replied to your request {shy_request.tracking_code}",
-            recipient=shy_request.requester_email,
-            related_request=shy_request,
-            use_ai_enhance=False,
-            deliver_email=False,
-            push_type="message_replied",
-        )
         # Delivery confirmation to sender — no push needed
         send_notification(
             subject="New message from target",

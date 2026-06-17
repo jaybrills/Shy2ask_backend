@@ -86,11 +86,24 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
         default=False,
         help_text=_('Designates whether this user has verified their phone number via Firebase.'),
     )
+    deleted_at = models.DateTimeField(
+        _('deleted at'),
+        null=True,
+        blank=True,
+        default=None,
+        help_text=_('Set when the user soft-deletes their own account. Null means the account is active.'),
+    )
 
     @property
     def is_verified(self) -> bool:
         """True only when both email and phone are verified."""
         return self.is_email_verified and self.is_phone_verified
+
+    @property
+    def is_soft_deleted(self) -> bool:
+        """True when the user voluntarily deleted their account (can be reactivated on login)."""
+        return self.deleted_at is not None
+
     date_joined = models.DateTimeField(_('date joined'), auto_now_add=True)
 
     objects = UserManager()

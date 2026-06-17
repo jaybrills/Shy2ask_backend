@@ -35,6 +35,15 @@ _SOCIAL_PROVIDER_MAP = {
 }
 
 
+def _reactivate_user(user: User) -> None:
+    """Reactivate a soft-deleted account in-place (must be called inside a transaction)."""
+    from django.utils import timezone
+    user.is_active = True
+    user.deleted_at = None
+    user.save(update_fields=["is_active", "deleted_at", "updated_at"])
+    logger.info("Reactivated soft-deleted account user_id=%s email=%s", user.id, user.email)
+
+
 def verify_firebase_token(id_token: str) -> dict:
     """
     Validate a Firebase ID token and return the decoded claims.
@@ -95,7 +104,10 @@ def _handle_phone_login(decoded_token: dict) -> tuple:
             )
             user = social.user
             if not user.is_active:
-                raise PermissionError("This account has been deactivated.")
+                if user.deleted_at is not None:
+                    _reactivate_user(user)
+                else:
+                    raise PermissionError("This account has been deactivated.")
             logger.info("Firebase phone login: existing account uid=%s user_id=%s", uid, user.id)
             return user, False
         except SocialAccount.DoesNotExist:
@@ -111,7 +123,10 @@ def _handle_phone_login(decoded_token: dict) -> tuple:
             )
             if user is not None:
                 if not user.is_active:
-                    raise PermissionError("This account has been deactivated.")
+                    if user.deleted_at is not None:
+                        _reactivate_user(user)
+                    else:
+                        raise PermissionError("This account has been deactivated.")
                 SocialAccount.objects.create(
                     user=user,
                     provider=SocialAccount.PROVIDER_PHONE,
@@ -165,7 +180,10 @@ def _handle_social_login(decoded_token: dict) -> tuple:
             )
             user = social.user
             if not user.is_active:
-                raise PermissionError("This account has been deactivated.")
+                if user.deleted_at is not None:
+                    _reactivate_user(user)
+                else:
+                    raise PermissionError("This account has been deactivated.")
             logger.info(
                 "Firebase social login: existing account uid=%s provider=%s user_id=%s",
                 uid, provider, user.id,
@@ -185,7 +203,10 @@ def _handle_social_login(decoded_token: dict) -> tuple:
             )
             if user is not None:
                 if not user.is_active:
-                    raise PermissionError("This account has been deactivated.")
+                    if user.deleted_at is not None:
+                        _reactivate_user(user)
+                    else:
+                        raise PermissionError("This account has been deactivated.")
                 SocialAccount.objects.create(
                     user=user,
                     provider=provider,
@@ -244,7 +265,10 @@ def handle_google_signup(decoded_token: dict) -> tuple[User, bool]:
         )
         if social is not None:
             if not social.user.is_active:
-                raise PermissionError("This account has been deactivated.")
+                if social.user.deleted_at is not None:
+                    _reactivate_user(social.user)
+                else:
+                    raise PermissionError("This account has been deactivated.")
             logger.info("Google signup: existing user_id=%s email=%s", social.user.id, email)
             return social.user, False
 
@@ -256,7 +280,10 @@ def handle_google_signup(decoded_token: dict) -> tuple[User, bool]:
         )
         if existing_user is not None:
             if not existing_user.is_active:
-                raise PermissionError("This account has been deactivated.")
+                if existing_user.deleted_at is not None:
+                    _reactivate_user(existing_user)
+                else:
+                    raise PermissionError("This account has been deactivated.")
             # Link Google to the existing account so future Google logins work.
             SocialAccount.objects.create(
                 user=existing_user,

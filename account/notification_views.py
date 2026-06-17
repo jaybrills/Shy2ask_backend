@@ -65,6 +65,21 @@ class MarkReadSerializer(serializers.Serializer):
     pass
 
 
+class DeleteNotificationsSerializer(serializers.Serializer):
+    ids = serializers.JSONField(
+        help_text="List of notification IDs to delete, or -1 to delete all notifications."
+    )
+
+    def validate_ids(self, value):
+        if value == -1:
+            return value
+        if isinstance(value, list) and all(isinstance(i, int) for i in value):
+            return value
+        raise serializers.ValidationError(
+            "ids must be a list of integers or -1 to clear all."
+        )
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class NotificationListView(APIView):
@@ -205,3 +220,36 @@ class MarkAllReadView(APIView):
             {"unread_count": 0, "marked_read": updated},
             status=status.HTTP_200_OK,
         )
+
+
+class DeleteNotificationsView(APIView):
+    """
+    Delete one, many, or all notifications for the authenticated user.
+
+    Body:
+      { "ids": [1, 2, 3] }   — delete specific notifications by ID
+      { "ids": -1 }           — delete ALL notifications for the user
+    """
+
+    authentication_classes = [BearerTokenAuthentication]
+    permission_classes = [IsVerified]
+
+    @extend_schema(
+        summary="Delete notifications",
+        request=DeleteNotificationsSerializer,
+        responses={200: None},
+    )
+    def delete(self, request):
+        serializer = DeleteNotificationsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        ids = serializer.validated_data["ids"]
+        qs = UserNotification.objects.filter(user=request.user)
+
+        if ids == -1:
+            deleted_count, _ = qs.delete()
+        else:
+            deleted_count, _ = qs.filter(pk__in=ids).delete()
+
+        return Response({"deleted": deleted_count}, status=status.HTTP_200_OK)

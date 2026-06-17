@@ -4,6 +4,7 @@ from .api_views import (
     CheckAliasView,
     CheckEmailView,
     CompletePhoneRegistrationView,
+    DeleteAccountView,
     DeviceRegisterView,
     DeviceUnregisterView,
     FirebaseLoginView,
@@ -20,6 +21,7 @@ from .api_views import (
     VerifyPhoneView,
 )
 from .notification_views import (
+    DeleteNotificationsView,
     MarkAllReadView,
     MarkNotificationReadView,
     NotificationListView,
@@ -56,6 +58,8 @@ urlpatterns = [
     path("auth/user-name/", UserNameByEmailView.as_view()),
     path("profile/me", ProfileMeView.as_view()),
     path("profile/me/", ProfileMeView.as_view()),
+    path("profile/delete", DeleteAccountView.as_view()),
+    path("profile/delete/", DeleteAccountView.as_view()),
     path("profile/users", UserListView.as_view()),
     path("profile/users/", UserListView.as_view()),
     path("profile/devices/register", DeviceRegisterView.as_view()),
@@ -72,4 +76,6 @@ urlpatterns = [
     path("notifications/mark-all-read/", MarkAllReadView.as_view()),
     path("notifications/<int:pk>/read", MarkNotificationReadView.as_view()),
     path("notifications/<int:pk>/read/", MarkNotificationReadView.as_view()),
+    path("notifications/delete", DeleteNotificationsView.as_view()),
+    path("notifications/delete/", DeleteNotificationsView.as_view()),
 ]

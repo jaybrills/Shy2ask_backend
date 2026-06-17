@@ -144,7 +144,7 @@ class DeviceUnregisterSerializer(serializers.Serializer):
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "alias_name", "is_active", "date_joined"]
+        fields = ["id", "email", "first_name", "last_name", "alias_name", "is_active", "deleted_at", "date_joined"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -182,6 +182,11 @@ class RegisterView(GenericAPIView):
 
         existing = User.objects.find_by_email(data["email"])
         if existing:
+            if existing.is_soft_deleted:
+                return Response(
+                    {"detail": "An account with this email was previously deleted. Log in with your old password to reactivate it."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if not existing.is_email_verified:
                 pending_user = PendingVerificationUser.objects.get(pk=existing.pk)
                 create_and_send_verification_otp(pending_user)
@@ -231,18 +236,40 @@ class LoginView(GenericAPIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        from django.utils import timezone
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = authenticate(
-            request,
-            username=User.objects.normalize_email(serializer.validated_data["email"]).lower(),
-            password=serializer.validated_data["password"],
-        )
-        if user is None or not user.is_active:
+        email = User.objects.normalize_email(serializer.validated_data["email"]).lower()
+        password = serializer.validated_data["password"]
+
+        user = authenticate(request, username=email, password=password)
+
+        if user is None:
+            # authenticate() returns None for both wrong password and inactive users.
+            # Check if this is a soft-deleted account that should be reactivated.
+            candidate = User.objects.find_by_email(email)
+            if candidate and candidate.is_soft_deleted and candidate.check_password(password):
+                candidate.is_active = True
+                candidate.deleted_at = None
+                candidate.save(update_fields=["is_active", "deleted_at", "updated_at"])
+                token, _ = Token.objects.get_or_create(user=candidate)
+                return Response({
+                    "token": token.key,
+                    "user": _verification_user_payload(candidate),
+                    "reactivated": True,
+                })
             return Response(
                 {"detail": "Invalid email or password."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+
+        if not user.is_active:
+            return Response(
+                {"detail": "Invalid email or password."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
         token, _ = Token.objects.get_or_create(user=user)
         return Response({"token": token.key, "user": _verification_user_payload(user)})
 
@@ -525,14 +552,26 @@ class CompletePhoneRegistrationView(GenericAPIView):
             return Response({"detail": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Guard: email already registered
-        if User.objects.find_by_email(email):
+        existing_by_email = User.objects.find_by_email(email)
+        if existing_by_email:
+            if existing_by_email.is_soft_deleted:
+                return Response(
+                    {"detail": "An account with this email was previously deleted. Log in with your old password to reactivate it."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {"detail": "An account with this email already exists. Please log in instead."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Guard: phone already registered (race condition / retry)
-        if User.objects.filter(phone_number=phone_number).exists():
+        existing_by_phone = User.objects.filter(phone_number=phone_number).first()
+        if existing_by_phone:
+            if existing_by_phone.is_soft_deleted:
+                return Response(
+                    {"detail": "This phone number belongs to a deleted account. Log in to reactivate it."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {"detail": "This phone number is already linked to an account. Please log in."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -673,7 +712,10 @@ class CheckEmailView(GenericAPIView):
         except ValidationError as exc:
             return Response({"is_available": False, "message": str(exc.message)})
 
-        if User.objects.by_email(email).exists():
+        existing = User.objects.by_email(email).first()
+        if existing:
+            if existing.is_soft_deleted:
+                return Response({"is_available": False, "message": "This email belongs to a deactivated account. Log in to reactivate it."})
             return Response({"is_available": False, "message": "This email is already registered."})
         return Response({"is_available": True, "message": "Email is available."})
 
@@ -867,6 +909,29 @@ class DeviceUnregisterView(GenericAPIView):
             fcm_token=serializer.validated_data["fcm_token"],
         ).update(is_active=False)
         return Response({"detail": "Device unregistered."}, status=status.HTTP_200_OK)
+
+
+class DeleteAccountView(GenericAPIView):
+    """
+    Soft-delete the authenticated user's account.
+
+    Sets is_active=False and deleted_at=now(), then invalidates all auth tokens.
+    The account can be reactivated by logging in again with the same credentials
+    or the same social/phone account.
+    """
+
+    permission_classes = [IsVerified]
+    authentication_classes = [BearerTokenAuthentication]
+
+    def delete(self, request):
+        from django.utils import timezone
+
+        user = request.user
+        user.is_active = False
+        user.deleted_at = timezone.now()
+        user.save(update_fields=["is_active", "deleted_at", "updated_at"])
+        Token.objects.filter(user=user).delete()
+        return Response({"message": "Your account has been deleted. You can reactivate it by logging in again."})
 
 
 class UserListView(ListAPIView):

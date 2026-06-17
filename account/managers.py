@@ -7,6 +7,9 @@ class UserQuerySet(models.QuerySet):
     def active(self):
         return self.filter(is_active=True)
 
+    def soft_deleted(self):
+        return self.filter(deleted_at__isnull=False)
+
     def verified(self):
         return self.filter(is_email_verified=True, is_phone_verified=True)
 
