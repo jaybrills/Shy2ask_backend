@@ -51,15 +51,26 @@ def get_firebase_app() -> firebase_admin.App | None:
 
 
 def _build_message(*, token: str, title: str, body: str, data: dict) -> messaging.Message:
+    # Data-only message: no top-level `notification` block, so FCM never
+    # auto-displays it. The client builds the single visible notification
+    # itself from `data` (title/body included) in all app states, avoiding
+    # a double-display (OS auto-render + client-built) for the same push.
+    payload = {str(k): str(v) for k, v in data.items()}
+    payload["title"] = title
+    payload["body"] = body
     return messaging.Message(
-        notification=messaging.Notification(title=title, body=body),
-        data={str(k): str(v) for k, v in data.items()},
+        data=payload,
         token=token,
+        # Android: no top-level `notification` block, so FCM never auto-displays —
+        # the client's FirebaseMessagingService builds the single notification from `data`.
         android=messaging.AndroidConfig(priority="high"),
+        # iOS: still needs aps.alert to render when the app is backgrounded/killed
+        # (a pure silent/content-available push won't show UI without a Notification
+        # Service Extension), so APNs keeps using the system alert as before.
         apns=messaging.APNSConfig(
             payload=messaging.APNSPayload(
-                aps=messaging.Aps(sound="default"),
-            )
+                aps=messaging.Aps(alert=messaging.ApsAlert(title=title, body=body), sound="default"),
+            ),
         ),
     )
 
