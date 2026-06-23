@@ -35,7 +35,7 @@ def _resolve_notification_recipient_user(recipient, related_request=None):
     return None
 
 
-def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True, push_type: str | None = None, deliver_push: bool = True):
+def send_notification(subject, body, recipient, related_request=None, use_ai_enhance=True, deliver_email=True, push_type: str | None = None, deliver_push: bool = True, notify_subscribers: bool = True):
     """
     Central notification dispatcher — email + DB record + WebSocket + push.
 
@@ -99,7 +99,7 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
     if recipient_user:
         send_notification_websocket(recipient_user.id, payload)
 
-    if related_request:
+    if related_request and notify_subscribers:
         _notify_subscribers(
             related_request, payload, subscription_type="request_updates",
             exclude_user_id=recipient_user.id if recipient_user else related_request.user_id,

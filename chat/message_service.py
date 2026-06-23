@@ -171,7 +171,18 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
             reply_push_type = "message_replied"
 
     if sender == Message.Actor.TARGET:
-        # Delivery confirmation to sender — no push needed
+        # Target replied → notify requester (#9 new_message, or #10 message_replied for threaded replies).
+        # This is the one call per event allowed to broadcast to request subscribers.
+        send_notification(
+            subject="New reply from target",
+            body=f"Target replied to your request {shy_request.tracking_code}",
+            recipient=shy_request.requester_email,
+            related_request=shy_request,
+            use_ai_enhance=False,
+            deliver_email=False,
+            push_type=reply_push_type,
+        )
+        # Delivery confirmation to sender — no push, no subscriber broadcast needed
         send_notification(
             subject="New message from target",
             body=f"Your reply on {shy_request.tracking_code} was delivered.",
@@ -180,6 +191,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
             use_ai_enhance=False,
             deliver_email=False,
             deliver_push=False,
+            notify_subscribers=False,
         )
         if admin_email:
             send_notification(
@@ -187,10 +199,12 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
                 body=body,
                 recipient=admin_email,
                 related_request=shy_request,
+                notify_subscribers=False,
             )
     else:
         if shy_request.target_email:
-            # Requester sent message → notify target (#9 new_message, or #10 message_replied for threaded replies)
+            # Requester sent message → notify target (#9 new_message, or #10 message_replied for threaded replies).
+            # This is the one call per event allowed to broadcast to request subscribers.
             send_notification(
                 subject="New reply from requester",
                 body=f"Requester sent a new message on {shy_request.tracking_code}.",
@@ -200,7 +214,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
                 deliver_email=False,
                 push_type=reply_push_type,
             )
-        # Delivery confirmation to sender — no push needed
+        # Delivery confirmation to sender — no push, no subscriber broadcast needed
         send_notification(
             subject="New message from requester",
             body=f"Your reply on {shy_request.tracking_code} was delivered.",
@@ -209,6 +223,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
             use_ai_enhance=False,
             deliver_email=False,
             deliver_push=False,
+            notify_subscribers=False,
         )
         if admin_email:
             send_notification(
@@ -216,6 +231,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
                 body=body,
                 recipient=admin_email,
                 related_request=shy_request,
+                notify_subscribers=False,
             )
     try:
         from .tasks import run_deal_detection_and_notify_task
