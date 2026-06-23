@@ -1,8 +1,11 @@
 import logging
 
 from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+_SKIP_NOTIFICATION_LOG_TYPES = {"new_message", "request_submitted", "new_request"}
 
 
 def _normalize_email(email: str | None) -> str:
@@ -66,19 +69,28 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
     from .models import Notification
     from .websocket_utils import send_notification_websocket
 
-    notification = Notification.objects.create(
-        recipient_email=recipient,
-        subject=subject,
-        body=body,
-        related_request=related_request,
-    )
+    # new_message / request_submitted / new_request are surfaced via push + email +
+    # the chat itself, so they're not persisted to the in-app notification log.
+    if push_type in _SKIP_NOTIFICATION_LOG_TYPES:
+        notification = None
+        notification_id = None
+        created_at = timezone.now()
+    else:
+        notification = Notification.objects.create(
+            recipient_email=recipient,
+            subject=subject,
+            body=body,
+            related_request=related_request,
+        )
+        notification_id = notification.id
+        created_at = notification.created_at
 
     payload = {
-        "id": notification.id,
-        "subject": notification.subject,
-        "body": notification.body,
-        "created_at": notification.created_at.isoformat(),
-        "created_at_display": notification.created_at.strftime("%b %d, %H:%M"),
+        "id": notification_id,
+        "subject": subject,
+        "body": body,
+        "created_at": created_at.isoformat(),
+        "created_at_display": created_at.strftime("%b %d, %H:%M"),
         "request_id": related_request.id if related_request else None,
         "tracking_code": related_request.tracking_code if related_request else None,
     }
@@ -90,7 +102,7 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
     if related_request:
         _notify_subscribers(
             related_request, payload, subscription_type="request_updates",
-            exclude_user_id=related_request.user_id,
+            exclude_user_id=recipient_user.id if recipient_user else related_request.user_id,
         )
 
     # ── Push notification ──────────────────────────────────────────────────────
@@ -101,7 +113,7 @@ def send_notification(subject, body, recipient, related_request=None, use_ai_enh
             fallback_title=subject,
             fallback_body=body,
             related_request=related_request,
-            notification_id=notification.id,
+            notification_id=notification_id,
         )
 
     return notification

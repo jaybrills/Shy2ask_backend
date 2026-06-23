@@ -85,7 +85,7 @@ def process_request_created_task(request_id: int) -> None:
 
 
 @shared_task
-def process_request_reply_side_effects_task(request_id: int, sender: str, body: str) -> None:
+def process_request_reply_side_effects_task(request_id: int, sender: str, body: str, reply_to_id: int | None = None) -> None:
     from .message_service import run_post_message_business_logic
     from .models import ShyRequest
 
@@ -96,7 +96,7 @@ def process_request_reply_side_effects_task(request_id: int, sender: str, body: 
         return
 
     try:
-        run_post_message_business_logic(shy_request=shy_request, sender=sender, body=body)
+        run_post_message_business_logic(shy_request=shy_request, sender=sender, body=body, reply_to_id=reply_to_id)
     except Exception:
         logger.exception("Failed reply side effects for request %s", request_id)
 

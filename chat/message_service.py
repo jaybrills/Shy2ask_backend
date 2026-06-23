@@ -143,7 +143,9 @@ def create_message_for_request(
             from .tasks import process_request_reply_side_effects_task
 
             transaction.on_commit(
-                lambda: process_request_reply_side_effects_task.delay(shy_request.id, sender, body)
+                lambda: process_request_reply_side_effects_task.delay(
+                    shy_request.id, sender, body, parent_message.id if parent_message else None
+                )
             )
         except Exception:
             pass
@@ -151,7 +153,7 @@ def create_message_for_request(
     return msg
 
 
-def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: str):
+def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: str, reply_to_id: int | None = None):
     """Notifications + AI deal detection after each message."""
     from .views import send_notification
     from .emailing import send_request_reply_emails
@@ -159,6 +161,14 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
     admin_email = getattr(settings, "ADMIN_NOTIFY_EMAIL", "")
 
     send_request_reply_emails(shy_request, sender, body)
+
+    # A threaded reply gets the more specific #10 message_replied push instead of
+    # the generic #9 new_message push — same recipient, so sending both would duplicate.
+    reply_push_type = "new_message"
+    if reply_to_id:
+        parent_message = Message.objects.filter(pk=reply_to_id, request=shy_request).first()
+        if parent_message:
+            reply_push_type = "message_replied"
 
     if sender == Message.Actor.TARGET:
         # Delivery confirmation to sender — no push needed
@@ -180,7 +190,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
             )
     else:
         if shy_request.target_email:
-            # Requester sent message → notify target (#9 new_message)
+            # Requester sent message → notify target (#9 new_message, or #10 message_replied for threaded replies)
             send_notification(
                 subject="New reply from requester",
                 body=f"Requester sent a new message on {shy_request.tracking_code}.",
@@ -188,7 +198,7 @@ def run_post_message_business_logic(shy_request: ShyRequest, sender: str, body: 
                 related_request=shy_request,
                 use_ai_enhance=False,
                 deliver_email=False,
-                push_type="new_message",
+                push_type=reply_push_type,
             )
         # Delivery confirmation to sender — no push needed
         send_notification(
