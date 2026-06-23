@@ -14,6 +14,12 @@ from account.models import CeleryTaskError
 
 logger = logging.getLogger(__name__)
 
+# Kept in sync with chat.views._SKIP_NOTIFICATION_LOG_TYPES — these push types
+# are visible via chat/the request itself, so they're not duplicated into the
+# UserNotification history log. Defined locally to avoid an account<->chat
+# cross-app import cycle.
+_SKIP_USER_NOTIFICATION_LOG_TYPES = {"new_message", "request_submitted", "new_request"}
+
 
 def log_task_error(task_name: str, args: tuple, kwargs: dict, exc: Exception) -> None:
     """Persist a Celery task failure to the DB and always log it."""
@@ -126,9 +132,10 @@ def send_push_notification_task(self, user_id: int, title: str, body: str, data:
     payload = data or {}
 
     # ── Persist to DB first (history is written even if FCM fails) ────────
-    # Ignorable-priority notifications are not stored in the log.
+    # Ignorable-priority notifications, and chat/request noise that's already
+    # visible in the chat itself, are not stored in the log.
     priority = payload.get("priority", UserNotification.Priority.MEDIUM)
-    if priority != UserNotification.Priority.IGNORABLE:
+    if priority != UserNotification.Priority.IGNORABLE and payload.get("type") not in _SKIP_USER_NOTIFICATION_LOG_TYPES:
         try:
             UserNotification.objects.create(
                 user_id=user_id,
