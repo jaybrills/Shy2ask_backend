@@ -96,8 +96,8 @@ class User(AbstractBaseUser, PermissionsMixin, UpdatedAtModel):
 
     @property
     def is_verified(self) -> bool:
-        """True only when both email and phone are verified."""
-        return self.is_email_verified and self.is_phone_verified
+        """True when either email or phone has been verified — one is sufficient."""
+        return self.is_email_verified or self.is_phone_verified
 
     @property
     def is_soft_deleted(self) -> bool:
